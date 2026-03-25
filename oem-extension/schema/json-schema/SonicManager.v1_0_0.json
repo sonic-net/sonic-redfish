@@ -1,0 +1,156 @@
+{
+    "$id": "https://github.com/sonic-net/sonic-redfish/tree/master/oem-extension/schema/json-schema/SonicManager.v1_0_0.json",
+    "$schema": "http://redfish.dmtf.org/schemas/v1/redfish-schema-v1.json",
+    "copyright": "Copyright 2025 SONiC Contributors.",
+    "definitions": {
+        "RackManagerInterface": {
+            "additionalProperties": false,
+            "description": "OEM interface for rack manager to communicate with switch BMC.",
+            "longDescription": "This resource provides an OEM interface on the SONiC switch BMC that allows the rack manager to post alerts and telemetry data.",
+            "patternProperties": {
+                "^([a-zA-Z_][a-zA-Z0-9_]*)?@(odata|Redfish|Message)\\.[a-zA-Z_][a-zA-Z0-9_]*$": {
+                    "description": "This property shall specify a valid odata or Redfish property.",
+                    "type": [
+                        "array",
+                        "boolean",
+                        "integer",
+                        "number",
+                        "null",
+                        "object",
+                        "string"
+                    ]
+                }
+            },
+            "properties": {
+                "Actions": {
+                    "$ref": "#/definitions/RackManagerInterfaceActions"
+                }
+            },
+            "type": "object"
+        },
+        "RackManagerInterfaceActions": {
+            "additionalProperties": false,
+            "description": "Available actions for the RackManagerInterface resource.",
+            "properties": {
+                "#SONiC.SubmitAlert": {
+                    "$ref": "#/definitions/SubmitAlert"
+                },
+                "#SONiC.SubmitTelemetry": {
+                    "$ref": "#/definitions/SubmitTelemetry"
+                }
+            },
+            "type": "object"
+        },
+        "SubmitAlert": {
+            "additionalProperties": false,
+            "description": "Rack manager posts a critical alert to the switch BMC.",
+            "longDescription": "This action allows a rack manager to submit a critical alert to the switch BMC for logging and event propagation.",
+            "properties": {
+                "target": {
+                    "description": "Link to invoke action.",
+                    "format": "uri-reference",
+                    "type": "string"
+                },
+                "title": {
+                    "description": "Friendly action name.",
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "SubmitAlertRequestBody": {
+            "additionalProperties": false,
+            "description": "Request body for SONiC.SubmitAlert action.",
+            "properties": {
+                "AlertType": {
+                    "description": "The type of alert (e.g., HighTemperature, LeakDetected, PowerFailure).",
+                    "type": "string"
+                },
+                "Severity": {
+                    "description": "The severity level of the alert.",
+                    "enum": [
+                        "Critical",
+                        "Warning",
+                        "OK"
+                    ],
+                    "type": "string"
+                },
+                "Message": {
+                    "description": "Human-readable alert message describing the condition.",
+                    "type": "string"
+                },
+                "OriginatorId": {
+                    "description": "Optional identifier of the originating rack manager.",
+                    "type": "string"
+                },
+                "Timestamp": {
+                    "description": "Optional ISO 8601 timestamp of when the alert was generated.",
+                    "format": "date-time",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "AlertType",
+                "Severity",
+                "Message"
+            ],
+            "type": "object"
+        },
+        "SubmitTelemetry": {
+            "additionalProperties": false,
+            "description": "Rack manager sends periodic telemetry data to the switch BMC.",
+            "longDescription": "This action allows a rack manager to submit periodic telemetry data including inlet liquid temperature, flow rate, pressure, and leak detection status.",
+            "properties": {
+                "target": {
+                    "description": "Link to invoke action.",
+                    "format": "uri-reference",
+                    "type": "string"
+                },
+                "title": {
+                    "description": "Friendly action name.",
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "SubmitTelemetryRequestBody": {
+            "additionalProperties": false,
+            "description": "Request body for SONiC.SubmitTelemetry action.",
+            "properties": {
+                "InletLiquidTemperatureCelsius": {
+                    "description": "Inlet liquid temperature in degrees Celsius.",
+                    "type": "number",
+                    "units": "Cel"
+                },
+                "InletLiquidFlowRateLPM": {
+                    "description": "Inlet liquid flow rate in liters per minute.",
+                    "type": "number",
+                    "units": "L/min"
+                },
+                "InletLiquidPressureKPa": {
+                    "description": "Inlet liquid pressure in kilopascals.",
+                    "type": "number",
+                    "units": "kPa"
+                },
+                "LeakDetected": {
+                    "description": "Whether a liquid leak has been detected.",
+                    "type": "boolean"
+                },
+                "Timestamp": {
+                    "description": "Optional ISO 8601 timestamp of when the telemetry was sampled.",
+                    "format": "date-time",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "InletLiquidTemperatureCelsius",
+                "InletLiquidFlowRateLPM",
+                "InletLiquidPressureKPa",
+                "LeakDetected"
+            ],
+            "type": "object"
+        }
+    },
+    "owningEntity": "SONiC",
+    "title": "#SonicManager.v1_0_0"
+}

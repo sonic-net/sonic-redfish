@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SONiC Team <support@nexthop.ai>
+Date: Tue, 25 Mar 2026 00:00:00 +0000
+Subject: [PATCH 3/3] Integrate SONiC OEM extension
+
+Register SONiC OEM Redfish routes and install OEM JSON schemas.
+
+OEM extension source files are copied into the bmcweb tree at build time
+by the Makefile (copy-oem-extension target). This patch only wires them
+into the bmcweb build and route registration:
+
+ * redfish.cpp: include sonic_oem_redfish.hpp and call requestRoutesSonicOem()
+ * schema/oem/meson.build: add sonic subdirectory for OEM schema installation
+
+Routes added:
+ - GET  /redfish/v1/Managers/Bmc/Oem/SONiC/RackManagerInterface
+ - POST /redfish/v1/Managers/Bmc/Oem/SONiC/RackManagerInterface/Actions/SONiC.SubmitAlert
+ - POST /redfish/v1/Managers/Bmc/Oem/SONiC/RackManagerInterface/Actions/SONiC.SubmitTelemetry
+---
+ redfish-core/schema/oem/meson.build | 1 +
+ redfish-core/src/redfish.cpp        | 3 +++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/redfish-core/schema/oem/meson.build b/redfish-core/schema/oem/meson.build
+index abcdef1..1234567 100644
+--- a/redfish-core/schema/oem/meson.build
++++ b/redfish-core/schema/oem/meson.build
+@@ -1 +1,2 @@
+ subdir('openbmc')
++subdir('sonic')
+diff --git a/redfish-core/src/redfish.cpp b/redfish-core/src/redfish.cpp
+index abcdef2..1234568 100644
+--- a/redfish-core/src/redfish.cpp
++++ b/redfish-core/src/redfish.cpp
+@@ -36,6 +36,7 @@
+ #include "openbmc/openbmc_managers.hpp"
+ #include "pcie.hpp"
+ #include "power.hpp"
++#include "sonic/sonic_oem_redfish.hpp"
+ #include "power_subsystem.hpp"
+ #include "power_supply.hpp"
+ #include "processor.hpp"
+@@ -249,6 +250,8 @@ RedfishService::RedfishService(App& app)
+
+     requestRoutesOpenBmcManager(*this);
+
++    requestRoutesSonicOem(*this);
++
+     validate();
+ }
+
+--
+2.34.1
+

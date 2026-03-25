@@ -7,4 +7,4 @@
 
 0001-Integrating-bmcweb-with-SONiC-s-build-system.patch
 0002-Add-Product-field-to-Redfish-service-root.patch
-
+0003-Integrate-SONiC-OEM-extension.patch
