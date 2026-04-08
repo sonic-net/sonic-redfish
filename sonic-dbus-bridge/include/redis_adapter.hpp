@@ -94,6 +94,27 @@ class RedisAdapter
      */
     std::vector<FirmwareVersionInfo> getFirmwareVersions();
 
+    /**
+     * @brief Get all leak sensor data from STATE_DB
+     *
+     * Reads LEAK_SENSOR|* keys from STATE_DB.
+     * Each key is a hash with fields: state, type, present.
+     *
+     * @return Vector of leak sensor entries
+     */
+    std::vector<LeakSensorInfo> getLeakSensors();
+
+    /**
+     * @brief Get a single leak sensor by name from STATE_DB
+     *
+     * Reads LEAK_SENSOR|<name> hash. More efficient than getLeakSensors()
+     * when only one sensor needs to be read (avoids KEYS scan).
+     *
+     * @param name Sensor name (e.g., "leak_sensor_1")
+     * @return Sensor info if found, nullopt otherwise
+     */
+    std::optional<LeakSensorInfo> getLeakSensor(const std::string& name);
+
   private:
     std::string configDbHost_;
     int configDbPort_;
@@ -134,6 +155,16 @@ class RedisAdapter
     std::optional<std::string> hget(redisContext* ctx,
                                     const std::string& key,
                                     const std::string& field);
+
+    /**
+     * @brief Find keys matching a pattern
+     *
+     * @param ctx Redis context
+     * @param pattern Glob-style pattern (e.g., "LEAK_SENSOR|*")
+     * @return Vector of matching key names
+     */
+    std::vector<std::string> keys(redisContext* ctx,
+                                   const std::string& pattern);
 
     /**
      * @brief Free Redis reply

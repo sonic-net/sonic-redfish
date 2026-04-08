@@ -1,0 +1,175 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Date: Mon, 07 Apr 2026 00:00:00 +0000
+Subject: [PATCH] Integrate rmc-events leak detection and fix meson stdexec issue
+
+This patch combines two changes:
+
+1. Integrate rmc-events leak detection into bmcweb:
+   - Wire rmc-events/ source files (copied into bmcweb tree before this
+     patch is applied) into the bmcweb build
+   - meson.build: add leak_detector_monitor.cpp to sources
+   - redfish.cpp: include leak_detection.hpp, register routes
+   - thermal_subsystem.hpp: add LeakDetection navigation link
+   - event_service.hpp: add "Environmental" and "LeakDetector" to
+     supported subscription filters
+   - event_service_manager.hpp: include and instantiate the
+     DbusLeakDetectorMonitor
+
+2. Fix meson stdexec wrap-redirect issue:
+   - When sdbusplus is fetched from git, it contains a wrap-redirect for
+     stdexec that points to a non-existent file, causing meson configuration
+     to fail
+   - Add proper stdexec.wrap file that fetches stdexec from git
+   - Use meson's patch_directory feature to override sdbusplus's stdexec.wrap
+
+No new file content in this patch -- the actual implementation lives
+in the rmc-events/ directory and is copied by the build system.
+---
+ meson.build                                             | 1 +
+ redfish-core/include/event_service_manager.hpp          | 8 ++++++++
+ redfish-core/lib/event_service.hpp                      | 8 ++++----
+ redfish-core/lib/thermal_subsystem.hpp                  | 4 ++++
+ redfish-core/src/redfish.cpp                            | 4 ++++
+ subprojects/packagefiles/sdbusplus/subprojects/stdexec.wrap | 6 ++++++
+ subprojects/sdbusplus.wrap                              | 1 +
+ subprojects/stdexec.wrap                                | 6 ++++++
+ 8 files changed, 32 insertions(+), 4 deletions(-)
+ create mode 100644 subprojects/packagefiles/sdbusplus/subprojects/stdexec.wrap
+ create mode 100644 subprojects/stdexec.wrap
+
+diff --git a/meson.build b/meson.build
+index 00000001..00000002 100644
+--- a/meson.build
++++ b/meson.build
+@@ -383,6 +383,7 @@ srcfiles_bmcweb = files(
+     'redfish-core/src/event_log.cpp',
+     'redfish-core/src/filesystem_log_watcher.cpp',
+     'redfish-core/src/filter_expr_executor.cpp',
++    'redfish-core/src/leak_detector_monitor.cpp',
+     'redfish-core/src/filter_expr_printer.cpp',
+     'redfish-core/src/heartbeat_messages.cpp',
+     'redfish-core/src/redfish.cpp',
+diff --git a/redfish-core/include/event_service_manager.hpp b/redfish-core/include/event_service_manager.hpp
+index 00000001..00000002 100644
+--- a/redfish-core/include/event_service_manager.hpp
++++ b/redfish-core/include/event_service_manager.hpp
+@@ -5,6 +5,7 @@
+
+ #include "dbus_log_watcher.hpp"
+ #include "error_messages.hpp"
++#include "leak_detector_monitor.hpp"
+ #include "event_logs_object_type.hpp"
+ #include "event_matches_filter.hpp"
+ #include "event_service_store.hpp"
+@@ -57,6 +58,7 @@ class EventServiceManager
+     std::optional<DbusEventLogMonitor> dbusEventLogMonitor;
+     std::optional<DbusTelemetryMonitor> matchTelemetryMonitor;
+     std::optional<FilesystemLogWatcher> filesystemLogMonitor;
++    std::optional<DbusLeakDetectorMonitor> leakDetectorMonitor;
+     boost::container::flat_map<std::string, std::shared_ptr<Subscription>>
+         subscriptionsMap;
+
+@@ -82,6 +84,11 @@ class EventServiceManager
+     {
+         // Load config from persist store.
+         initConfig();
++
++        // Always start the leak detector monitor so that D-Bus
++        // PropertiesChanged signals on leak sensors are forwarded
++        // as Redfish events to matching subscribers via sendEvent().
++        leakDetectorMonitor.emplace();
+     }
+
+     static EventServiceManager& getInstance()
+diff --git a/redfish-core/lib/event_service.hpp b/redfish-core/lib/event_service.hpp
+index 00000001..00000002 100644
+--- a/redfish-core/lib/event_service.hpp
++++ b/redfish-core/lib/event_service.hpp
+@@ -49,11 +49,11 @@ namespace redfish
+
+ static constexpr const std::array<const char*, 2> supportedEvtFormatTypes = {
+     eventFormatType, metricReportFormatType};
+-static constexpr const std::array<const char*, 4> supportedRegPrefixes = {
+-    "Base", "OpenBMC", "TaskEvent", "HeartbeatEvent"};
++static constexpr const std::array<const char*, 5> supportedRegPrefixes = {
++    "Base", "OpenBMC", "TaskEvent", "HeartbeatEvent", "Environmental"};
+ static constexpr const std::array<const char*, 3> supportedRetryPolicies = {
+     "TerminateAfterRetries", "SuspendRetries", "RetryForever"};
+
+-static constexpr const std::array<const char*, 2> supportedResourceTypes = {
+-    "Task", "Heartbeat"};
++static constexpr const std::array<const char*, 3> supportedResourceTypes = {
++    "Task", "Heartbeat", "LeakDetector"};
+
+diff --git a/redfish-core/lib/thermal_subsystem.hpp b/redfish-core/lib/thermal_subsystem.hpp
+index 00000001..00000002 100644
+--- a/redfish-core/lib/thermal_subsystem.hpp
++++ b/redfish-core/lib/thermal_subsystem.hpp
+@@ -53,6 +53,11 @@ inline void doThermalSubsystemCollection(
+     asyncResp->res.jsonValue["ThermalMetrics"]["@odata.id"] =
+         boost::urls::format(
+             "/redfish/v1/Chassis/{}/ThermalSubsystem/ThermalMetrics",
+             chassisId);
+
++    asyncResp->res.jsonValue["LeakDetection"]["@odata.id"] =
++        boost::urls::format(
++            "/redfish/v1/Chassis/{}/ThermalSubsystem/LeakDetection",
++            chassisId);
++
+     asyncResp->res.jsonValue["Status"]["State"] = resource::State::Enabled;
+diff --git a/redfish-core/src/redfish.cpp b/redfish-core/src/redfish.cpp
+index 00000001..00000002 100644
+--- a/redfish-core/src/redfish.cpp
++++ b/redfish-core/src/redfish.cpp
+@@ -20,6 +20,7 @@
+ #include "fabric_ports.hpp"
+ #include "fan.hpp"
+ #include "hypervisor_system.hpp"
++#include "leak_detection.hpp"
+ #include "log_services.hpp"
+ #include "manager_diagnostic_data.hpp"
+ #include "manager_logservices_dbus_eventlog.hpp"
+@@ -100,4 +101,7 @@ requestRoutesThermalMetrics
+         requestRoutesThermalSubsystem(app);
+         requestRoutesFan(app);
++        requestRoutesLeakDetection(app);
++        requestRoutesLeakDetectorCollection(app);
++        requestRoutesLeakDetector(app);
+     }
+     requestRoutesManager(app);
+diff --git a/subprojects/packagefiles/sdbusplus/subprojects/stdexec.wrap b/subprojects/packagefiles/sdbusplus/subprojects/stdexec.wrap
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/subprojects/packagefiles/sdbusplus/subprojects/stdexec.wrap
+@@ -0,0 +1,6 @@
++[wrap-git]
++url = https://github.com/NVIDIA/stdexec.git
++revision = HEAD
++
++[provide]
++stdexec = stdexec_dep
+diff --git a/subprojects/sdbusplus.wrap b/subprojects/sdbusplus.wrap
+index 1..2 100644
+--- a/subprojects/sdbusplus.wrap
++++ b/subprojects/sdbusplus.wrap
+@@ -1,6 +1,7 @@
+ [wrap-git]
+ url = https://github.com/openbmc/sdbusplus.git
+ revision = HEAD
++patch_directory = sdbusplus
+
+ [provide]
+ sdbusplus = sdbusplus_dep
+diff --git a/subprojects/stdexec.wrap b/subprojects/stdexec.wrap
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/subprojects/stdexec.wrap
+@@ -0,0 +1,6 @@
++[wrap-git]
++url = https://github.com/NVIDIA/stdexec.git
++revision = HEAD
++
++[provide]
++stdexec = stdexec_dep
