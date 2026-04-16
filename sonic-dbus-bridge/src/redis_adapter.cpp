@@ -361,6 +361,123 @@ std::vector<FirmwareVersionInfo> RedisAdapter::getFirmwareVersions()
     return versions;
 }
 
+std::vector<std::string> RedisAdapter::keys(redisContext* ctx,
+                                              const std::string& pattern)
+{
+    std::vector<std::string> result;
+
+    redisReply* reply = static_cast<redisReply*>(
+        redisCommand(ctx, "KEYS %s", pattern.c_str()));
+
+    if (!reply)
+    {
+        return result;
+    }
+
+    if (reply->type == REDIS_REPLY_ARRAY)
+    {
+        for (size_t i = 0; i < reply->elements; i++)
+        {
+            if (reply->element[i]->type == REDIS_REPLY_STRING)
+            {
+                result.emplace_back(reply->element[i]->str,
+                                    reply->element[i]->len);
+            }
+        }
+    }
+
+    freeReplyObject(reply);
+    return result;
+}
+
+std::vector<LeakSensorInfo> RedisAdapter::getLeakSensors()
+{
+    std::vector<LeakSensorInfo> sensors;
+
+    if (!stateDbContext_)
+    {
+        return sensors;
+    }
+
+    // Discover all LEAK_SENSOR|* keys in STATE_DB
+    auto keyList = keys(stateDbContext_, "LEAK_SENSOR|*");
+
+    for (const auto& key : keyList)
+    {
+        // Extract sensor name from key (e.g., "LEAK_SENSOR|leak_sensor_1" -> "leak_sensor_1")
+        size_t pos = key.find('|');
+        if (pos == std::string::npos || pos + 1 >= key.size())
+        {
+            continue;
+        }
+        std::string sensorName = key.substr(pos + 1);
+
+        auto fields = hgetall(stateDbContext_, key);
+        if (fields.empty())
+        {
+            continue;
+        }
+
+        LeakSensorInfo sensor;
+        sensor.name = sensorName;
+
+        if (fields.count("state"))
+        {
+            sensor.state = fields["state"];
+        }
+        if (fields.count("type"))
+        {
+            sensor.type = fields["type"];
+        }
+        if (fields.count("present"))
+        {
+            sensor.present = (fields["present"] == "true");
+        }
+
+        sensors.push_back(sensor);
+        LOG_INFO("LeakSensor: %s state=%s type=%s present=%s",
+                 sensor.name.c_str(), sensor.state.c_str(),
+                 sensor.type.c_str(), sensor.present ? "true" : "false");
+    }
+
+    LOG_INFO("Found %zu leak sensors in STATE_DB", sensors.size());
+    return sensors;
+}
+
+std::optional<LeakSensorInfo> RedisAdapter::getLeakSensor(
+    const std::string& name)
+{
+    if (!stateDbContext_)
+    {
+        return std::nullopt;
+    }
+
+    std::string key = "LEAK_SENSOR|" + name;
+    auto fields = hgetall(stateDbContext_, key);
+    if (fields.empty())
+    {
+        return std::nullopt;
+    }
+
+    LeakSensorInfo sensor;
+    sensor.name = name;
+
+    if (fields.count("state"))
+    {
+        sensor.state = fields["state"];
+    }
+    if (fields.count("type"))
+    {
+        sensor.type = fields["type"];
+    }
+    if (fields.count("present"))
+    {
+        sensor.present = (fields["present"] == "true");
+    }
+
+    return sensor;
+}
+
 void RedisAdapter::freeReply(void* reply)
 {
     if (reply)

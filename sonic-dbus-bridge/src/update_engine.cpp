@@ -189,6 +189,40 @@ void UpdateEngine::onRedisFieldChange(const std::string& key,
             LOG_DEBUG("[UpdateEngine] SWITCH_HOST_STATE changed (not currently mapped to D-Bus)");
             // Future: Map to host state D-Bus properties if needed
         }
+        // Handle LEAK_SENSOR|<name> changes
+        else if (key.starts_with("LEAK_SENSOR|"))
+        {
+            std::string sensorName = key.substr(std::string("LEAK_SENSOR|").size());
+            LOG_INFO("[UpdateEngine] LEAK_SENSOR changed: %s", sensorName.c_str());
+
+            auto sensor = redisAdapter_->getLeakSensor(sensorName);
+            if (!sensor)
+            {
+                LOG_WARNING("[UpdateEngine] Leak sensor %s not found in Redis",
+                            sensorName.c_str());
+            }
+            else
+            {
+                auto it = cachedLeakStates_.find(sensorName);
+                if (it == cachedLeakStates_.end() ||
+                    it->second != sensor->state)
+                {
+                    LOG_INFO("[UpdateEngine] Leak sensor %s state: %s -> %s",
+                             sensorName.c_str(),
+                             it != cachedLeakStates_.end() ? it->second.c_str() : "(none)",
+                             sensor->state.c_str());
+
+                    cachedLeakStates_[sensorName] = sensor->state;
+                    dbusExporter_->updateLeakSensorState(sensorName,
+                                                          sensor->state);
+                }
+                else
+                {
+                    LOG_DEBUG("[UpdateEngine] Leak sensor %s state unchanged (%s)",
+                              sensorName.c_str(), sensor->state.c_str());
+                }
+            }
+        }
         else
         {
             LOG_WARNING("[UpdateEngine] Unknown Redis key: %s", key.c_str());

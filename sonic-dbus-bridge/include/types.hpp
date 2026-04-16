@@ -121,6 +121,17 @@ struct FanInfo
 };
 
 /**
+ * @brief Leak sensor information from STATE_DB
+ */
+struct LeakSensorInfo
+{
+    std::string name;              // e.g., "leak_sensor_1"
+    std::string state{"OK"};       // "OK", "Warning", "Critical", "Unavailable", "Absent"
+    std::string type{"Moisture"};  // "Moisture" or "FloatSwitch"
+    bool present{false};
+};
+
+/**
  * @brief Platform description from platform.json
  */
 struct PlatformDescription
@@ -163,6 +174,7 @@ struct InventoryModel
     ChassisState chassisState;
     std::vector<PsuInfo> psus;
     std::vector<FanInfo> fans;
+    std::vector<LeakSensorInfo> leakSensors;
     std::vector<FirmwareVersionInfo> firmwareVersions;
 };
 

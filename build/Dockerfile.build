@@ -36,6 +36,26 @@ RUN apt-get update && apt-get install -y \
     python3-inflection \
     && rm -rf /var/lib/apt/lists/*
 
+# Pre-build and install sdbusplus as a system library.
+# This avoids fetching NVIDIA/stdexec during the main build — stdexec is only
+# needed to compile sdbusplus's async subsystem, and the installed pkg-config
+# file does not expose it as a public dependency.
+ARG SDBUSPLUS_COMMIT=a74f63b1903c8b00d9c134164eaa4ac8e925d0f5
+ARG STDEXEC_COMMIT=91782e6cbfad5df74237bac139b5d61f6cf40313
+RUN set -e \
+    && git init /tmp/stdexec && cd /tmp/stdexec \
+    && git remote add origin https://github.com/NVIDIA/stdexec.git \
+    && git fetch --depth 1 origin ${STDEXEC_COMMIT} && git checkout FETCH_HEAD \
+    && git init /tmp/sdbusplus && cd /tmp/sdbusplus \
+    && git remote add origin https://github.com/openbmc/sdbusplus.git \
+    && git fetch --depth 1 origin ${SDBUSPLUS_COMMIT} && git checkout FETCH_HEAD \
+    && cp -r /tmp/stdexec /tmp/sdbusplus/subprojects/stdexec \
+    && cd /tmp/sdbusplus \
+    && meson setup build --prefix=/usr -Dtests=disabled -Dexamples=disabled \
+    && ninja -C build \
+    && ninja -C build install \
+    && rm -rf /tmp/sdbusplus /tmp/stdexec
+
 WORKDIR /workspace
 
 CMD ["/bin/bash"]

@@ -7,4 +7,5 @@
 
 0001-Integrating-bmcweb-with-SONiC-s-build-system.patch
 0002-Add-Product-field-to-Redfish-service-root.patch
+0004-Integrate-rmc-events-leak-detection-into-bmcweb.patch
 

@@ -87,7 +87,7 @@ The build system is designed for **Debian Trixie** and uses:
 
 1. **Docker-based builds**: All compilation happens inside a `debian:trixie` container for consistency
 2. **Debian packaging**: Uses `dpkg-buildpackage` to create `.deb` packages
-3. **Meson subprojects**: Dependencies (sdbusplus, stdexec) are managed via `.wrap` files
+3. **Meson subprojects**: sdbusplus is pre-built in the Docker image; other dependencies are managed via `.wrap` files
 4. **Automatic dependencies**: Build targets automatically trigger required cleanup and setup steps
 5. **Patch management**: Uses a `patches/series` file to define patch order
 
@@ -110,7 +110,7 @@ make all
    - Apply patches from patches/series to bmcweb source
 
 4. Build sonic-dbus-bridge
-   - Meson downloads dependencies (sdbusplus, stdexec) via .wrap files
+   - Uses pre-installed sdbusplus from Docker image
    - dpkg-buildpackage creates .deb packages
 
 5. Build bmcweb
@@ -166,18 +166,21 @@ To add a new patch:
 
 ## Dependency Management
 
-Dependencies are managed via **Meson wrap files** (`.wrap`):
+**sdbusplus** (OpenBMC D-Bus C++ bindings) is pre-built and installed in the Docker
+image (`build/Dockerfile.build`). Both bmcweb and sonic-dbus-bridge find it via
+pkg-config at build time. The pinned sdbusplus and stdexec commits are configured
+as `ARG` directives in the Dockerfile.
+
+Other dependencies are managed via **Meson wrap files** (`.wrap`):
 
 ### bmcweb dependencies:
-- `bmcweb/subprojects/sdbusplus.wrap` - D-Bus C++ bindings
-- `bmcweb/subprojects/stdexec.wrap` - C++23 executors
+- `bmcweb/subprojects/sdbusplus.wrap` - D-Bus C++ bindings (fallback; prefers system package)
 - Plus other dependencies defined in bmcweb upstream
 
 ### sonic-dbus-bridge dependencies:
-- `sonic-dbus-bridge/subprojects/sdbusplus.wrap` - D-Bus C++ bindings
-- `sonic-dbus-bridge/subprojects/stdexec.wrap` - C++23 executors
+- `sonic-dbus-bridge/subprojects/sdbusplus.wrap` - D-Bus C++ bindings (fallback; prefers system package)
 
-Meson automatically downloads and builds these dependencies during the build process.
+Meson automatically downloads and builds subproject dependencies during the build process.
 
 The Debian packages can be installed in SONiC images.
 
