@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SONiC Team <sonic-dev@lists.sonic-net.org>
+Date: Sun, 11 May 2026 00:00:00 +0000
+Subject: [PATCH] Add libcap dependency for static libsystemd linking
+
+When linking against libsystemd.a statically, the linker requires
+libcap to resolve capability-related symbols (cap_set_flag, etc.)
+used by systemd's capability-util.c.
+
+This adds libcap as an explicit dependency to bmcweb_dependencies
+to ensure proper linking in static build configurations.
+---
+ meson.build | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/meson.build b/meson.build
+index 00000000..11111111 100644
+--- a/meson.build
++++ b/meson.build
+@@ -289,7 +289,10 @@ libsystemd = dependency(
+ )
+ 
+ zlib = dependency('zlib')
+-bmcweb_dependencies += [libsystemd, zlib]
++# libcap is needed when linking with static libsystemd.a
++cap = dependency('libcap', required: true)
++bmcweb_dependencies += [libsystemd, zlib, cap]
++
+ 
+ nlohmann_json_dep = dependency(
+     'nlohmann_json',
+-- 
+2.34.1
+

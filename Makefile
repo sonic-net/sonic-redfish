@@ -126,7 +126,7 @@ build: $(DOCKERFILE_BUILD)
 		-v "$(REPO_ROOT):/workspace" \
 		-w /workspace \
 		-e SONIC_CONFIG_MAKE_JOBS=$(SONIC_CONFIG_MAKE_JOBS) \
-		$(DOCKER_BUILDER_IMAGE) \
+		$(DOCKER_BUILDER_IMAGE)\
 		bash -c "\
 			set -e; \
 			git config --global --add safe.directory /workspace; \
@@ -218,16 +218,6 @@ copy-rmc-events: setup-bmcweb
 		echo "  rmc-events files copied"; \
 	else \
 		echo "  No rmc-events directory found, skipping"; \
-	fi
-
-# Copy stdexec.wrap into sdbusplus subprojects after meson fetches it
-# This is needed because sdbusplus from git doesn't have our stdexec.wrap redirect
-fix-sdbusplus-stdexec:
-	@if [ -d "$(BMCWEB_DIR)/subprojects/sdbusplus" ] && [ ! -f "$(BMCWEB_DIR)/subprojects/sdbusplus/subprojects/stdexec.wrap" ]; then \
-		echo "Copying stdexec.wrap to sdbusplus/subprojects/..."; \
-		mkdir -p $(BMCWEB_DIR)/subprojects/sdbusplus/subprojects; \
-		cp $(BMCWEB_DIR)/subprojects/stdexec.wrap $(BMCWEB_DIR)/subprojects/sdbusplus/subprojects/ || true; \
-		echo "  stdexec.wrap copied"; \
 	fi
 
 # Apply patches using series file
@@ -348,7 +338,7 @@ build-bridge: clean
 	@ls -lh $(TARGET_DIR)/sonic-dbus-bridge* 2>/dev/null || echo "  No artifacts found"
 
 # Build bmcweb natively (inside Docker container, no nested Docker)
-build-bmcweb-native: setup-bmcweb copy-oem-extension apply-patches fix-sdbusplus-stdexec
+build-bmcweb-native: setup-bmcweb copy-oem-extension apply-patches
 	@echo "========================================="
 	@echo "Building bmcweb Debian package (native)"
 	@echo "========================================="
@@ -367,6 +357,7 @@ build-bmcweb-native: setup-bmcweb copy-oem-extension apply-patches fix-sdbusplus
 	@mv $(REPO_ROOT)/bmcweb_*.changes $(TARGET_DIR)/ 2>/dev/null || true
 	@mv $(REPO_ROOT)/bmcweb_*.buildinfo $(TARGET_DIR)/ 2>/dev/null || true
 	@mv $(REPO_ROOT)/bmcweb_*.dsc $(TARGET_DIR)/ 2>/dev/null || true
+	@mv $(REPO_ROOT)/bmcweb_*.tar.gz $(TARGET_DIR)/ 2>/dev/null || true
 	@echo ""
 	@echo "========================================="
 	@echo "bmcweb build complete!"
