@@ -61,6 +61,7 @@ sources = files(
     'src/config_manager.cpp',
     'src/object_mapper.cpp',
     'src/state_manager.cpp',
+    'src/rack_manager_receiver.cpp',
     # User management
     'src/user_mgr.cpp',
     'src/users.cpp',
