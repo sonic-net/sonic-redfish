@@ -50,14 +50,16 @@ public:
     
     /**
      * @brief Publish a host transition request to Redis
-     * 
-     * Creates an entry in BMC_HOST_REQUEST table with:
+     *
+     * Creates an entry in BMC_HOST_REQUEST table with SONiC key format:
+     * Redis key: BMC_HOST_REQUEST|<request_id>
+     * Fields:
      * - requested_transition: the transition type
      * - request_id: unique identifier
      * - timestamp: current time
      * - status: "pending"
-     * 
-     * @param transition Transition type (e.g., "Reboot", "On", "Off")
+     *
+     * @param transition Transition type (e.g., "reset-in", "reset-out", "reset-cycle")
      * @return request_id on success, empty string on failure
      */
     std::string publishHostRequest(const std::string& transition);
@@ -74,8 +76,11 @@ public:
     
     /**
      * @brief Update BMC_HOST_REQUEST status field
-     * 
-     * @param requestId Request ID to update
+     *
+     * Updates the status field for the given request using SONiC key format:
+     * Redis key: BMC_HOST_REQUEST|<requestId>
+     *
+     * @param requestId Request ID to update (used to construct the Redis key)
      * @param status New status ("pending", "processing", "completed", "failed")
      * @return true if update successful
      */
