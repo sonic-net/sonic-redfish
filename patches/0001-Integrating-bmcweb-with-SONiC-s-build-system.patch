@@ -16,8 +16,8 @@ These packaging files allow bmcweb to integrate with SONiC's dpkg-based build sy
  debian/install       |  7 +++++++
  debian/not-installed |  4 ++++
  debian/rules         | 20 +++++++++++++++++++
- meson.build          |  5 ++++-
- 6 files changed, 89 insertions(+), 1 deletion(-)
+ meson.build          | 10 ++++++++--
+ 6 files changed, 94 insertions(+), 2 deletions(-)
  create mode 100644 debian/changelog
  create mode 100644 debian/control
  create mode 100644 debian/install
@@ -107,7 +107,7 @@ new file mode 100644
 index 00000000..5d12edab
 --- /dev/null
 +++ b/debian/not-installed
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,23 @@
 +usr/include
 +usr/lib/*/libboost_*.a
 +usr/lib/*/pkgconfig
@@ -129,6 +129,7 @@ index 00000000..5d12edab
 +usr/share/man/man1/zstdless.1
 +usr/share/man/man1/zstdmt.1
 +usr/lib/*/libsdbusplus.so*
++usr/lib/*/libsdbusplus.a
 +
 diff --git a/debian/rules b/debian/rules
 new file mode 100755
@@ -172,6 +173,19 @@ index 93c26b72..d533eeeb 100644
  nghttp2_flags = []
  if (cxx.get_id() == 'clang')
      if (cxx.version().version_compare('<17.0'))
+@@ -248,7 +251,11 @@ endif
+ endif
+ bmcweb_dependencies += nghttp2
+ 
+-sdbusplus = dependency('sdbusplus')
++sdbusplus = dependency(
++    'sdbusplus',
++    default_options: ['default_library=static'],
++    static: true,
++)
+ bmcweb_dependencies += sdbusplus
+ 
+ cli11 = dependency('CLI11', required: false, include_type: 'system')
 -- 
 2.34.1
 

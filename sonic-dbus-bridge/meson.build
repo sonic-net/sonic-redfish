@@ -44,7 +44,11 @@ hiredis_dep = dependency('hiredis')
 jsoncpp_dep = dependency('jsoncpp')
 boost_dep = dependency('boost', modules: ['system'])
 threads_dep = dependency('threads')
-sdbusplus_dep = dependency('sdbusplus')
+sdbusplus_dep = dependency(
+    'sdbusplus',
+    default_options: ['default_library=static'],
+    static: true,
+)
 
 # Source files
 sources = files(

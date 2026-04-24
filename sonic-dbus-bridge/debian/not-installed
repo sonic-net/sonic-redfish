@@ -1,0 +1,5 @@
+usr/include
+usr/lib/*/libsdbusplus.a
+usr/lib/*/libsdbusplus.so*
+usr/lib/*/pkgconfig
+usr/var

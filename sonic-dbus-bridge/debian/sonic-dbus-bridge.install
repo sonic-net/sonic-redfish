@@ -1,0 +1,6 @@
+usr/bin/sonic-dbus-bridge
+etc/sonic-dbus-bridge/config.yaml
+etc/dbus-1/system.d/xyz.openbmc_project.ObjectMapper.conf
+etc/dbus-1/system.d/xyz.openbmc_project.User.Manager.conf
+etc/dbus-1/system.d/xyz.openbmc_project.Inventory.Manager.conf
+var/lib/sonic-dbus-bridge
