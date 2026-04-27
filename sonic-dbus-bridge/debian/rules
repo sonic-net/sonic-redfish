@@ -15,12 +15,19 @@ override_dh_auto_configure:
 	dh_auto_configure -- --wrap-mode=default
 
 override_dh_auto_install:
-	dh_auto_install
-	# Create state directory
-	install -d debian/sonic-dbus-bridge/var/lib/sonic-dbus-bridge
+	# Force install into debian/tmp so debian/sonic-dbus-bridge.install
+	# (allow-list) and debian/not-installed can filter out sdbusplus
+	# headers / pkgconfig / static lib dropped by the meson subproject.
+	dh_auto_install --destdir=debian/tmp
+	# Create state directory in staging so the allow-list picks it up
+	install -d debian/tmp/var/lib/sonic-dbus-bridge
 
 override_dh_installsystemd:
 	dh_installsystemd --name=sonic-dbus-bridge --no-start
+
+override_dh_makeshlibs:
+	# sdbusplus is linked statically; do not emit shlibs for it
+	dh_makeshlibs -Xlibsdbusplus
 
 override_dh_shlibdeps:
 	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info

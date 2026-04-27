@@ -152,33 +152,36 @@ std::string RedisStatePublisher::publishHostRequest(const std::string& transitio
     LOG_INFO( "[RedisStatePublisher] ========================================");
     LOG_INFO( "[RedisStatePublisher] Publishing host transition request");
     LOG_INFO( "[RedisStatePublisher] Transition: %s", transition.c_str());
-    
+
     std::string requestId = generateRequestId();
     auto timestamp = std::chrono::system_clock::now().time_since_epoch().count();
-    
+
     std::map<std::string, std::string> fields = {
         {"requested_transition", transition},
         {"request_id", requestId},
         {"timestamp", std::to_string(timestamp)},
         {"status", "pending"}
     };
-    
+
     LOG_INFO( "[RedisStatePublisher] Request details:");
     LOG_INFO( "[RedisStatePublisher]   - request_id: %s", requestId.c_str());
     LOG_INFO( "[RedisStatePublisher]   - requested_transition: %s", transition.c_str());
     LOG_INFO( "[RedisStatePublisher]   - timestamp: %ld", timestamp);
     LOG_INFO( "[RedisStatePublisher]   - status: pending");
-    
-    if (!hmset("BMC_HOST_REQUEST", fields))
+
+    // Use SONiC table key format: TABLE_NAME|unique_key
+    std::string redisKey = "BMC_HOST_REQUEST|" + requestId;
+
+    if (!hmset(redisKey, fields))
     {
         LOG_ERROR( "[RedisStatePublisher] Failed to publish host request to Redis");
         LOG_ERROR( "[RedisStatePublisher] ========================================");
         return "";
     }
-    
-    LOG_INFO( "[RedisStatePublisher] Host request published successfully to BMC_HOST_REQUEST");
+
+    LOG_INFO( "[RedisStatePublisher] Host request published successfully to %s", redisKey.c_str());
     LOG_INFO( "[RedisStatePublisher] ========================================");
-    
+
     return requestId;
 }
 
@@ -217,15 +220,18 @@ bool RedisStatePublisher::updateRequestStatus(const std::string& requestId,
     LOG_INFO( "[RedisStatePublisher]   - request_id: %s", requestId.c_str());
     LOG_INFO( "[RedisStatePublisher]   - status: %s", status.c_str());
 
-    bool result = hset("BMC_HOST_REQUEST", "status", status);
+    // Use SONiC table key format: TABLE_NAME|unique_key
+    std::string redisKey = "BMC_HOST_REQUEST|" + requestId;
+
+    bool result = hset(redisKey, "status", status);
 
     if (result)
     {
-        LOG_INFO( "[RedisStatePublisher] Request status updated successfully");
+        LOG_INFO( "[RedisStatePublisher] Request status updated successfully for %s", redisKey.c_str());
     }
     else
     {
-        LOG_ERROR( "[RedisStatePublisher] Failed to update request status");
+        LOG_ERROR( "[RedisStatePublisher] Failed to update request status for %s", redisKey.c_str());
     }
 
     return result;

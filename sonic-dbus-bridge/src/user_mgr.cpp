@@ -26,8 +26,11 @@ namespace user
 
 namespace
 {
-// Only the admin user is exposed via D-Bus for authentication/authorization
-constexpr const char* adminUserName = "admin";
+// Only one user is exposed via D-Bus for Redfish authentication/authorization.
+// TODO: If needed, replace this hardcoded name with a dynamic scan of /etc/passwd +
+// /etc/group, picking up every local user that belongs to one of the
+// privilege groups in privMgr (priv-admin / priv-operator / priv-user).
+constexpr const char* adminUserName = "bmcweb";
 
 long currentDate()
 {
@@ -151,7 +154,7 @@ void UserMgr::initUserObjects(void)
 
     if (status != 0 || resultPtr == nullptr)
     {
-        LOG_ERROR("Admin user '%s' not found in system", userName.c_str());
+        LOG_ERROR("Redfish user '%s' not found in system", userName.c_str());
         // Don't throw - service can still start, but GetUserInfo will fail
         return;
     }
@@ -172,7 +175,8 @@ void UserMgr::initUserObjects(void)
                                     server, objPath, userGroups,
                                     userPriv, isUserEnabled(userName), *this));
 
-    LOG_INFO("Created D-Bus object for admin user at %s", objPath.c_str());
+    LOG_INFO("Created D-Bus object for Redfish user '%s' at %s",
+             userName.c_str(), objPath.c_str());
 }
 
 UserInfoMap UserMgr::getUserInfo(const std::string& userName)
