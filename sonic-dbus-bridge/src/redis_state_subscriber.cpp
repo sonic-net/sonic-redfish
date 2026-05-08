@@ -181,10 +181,10 @@ bool RedisStateSubscriber::start(const std::string& host, int port,
     
     LOG_INFO( "[RedisStateSubscriber] STATE_DB (DB 6) selected on both contexts");
     
-    // Subscribe to keyspace notifications for SWITCH_HOST_STATE
-    LOG_INFO( "[RedisStateSubscriber] Subscribing to __keyspace@6__:SWITCH_HOST_STATE");
+    // Subscribe to keyspace notifications for HOST_STATE|switch-host
+    LOG_INFO( "[RedisStateSubscriber] Subscribing to __keyspace@6__:HOST_STATE|switch-host");
     reply = (redisReply*)redisCommand(subContext_,
-        "SUBSCRIBE __keyspace@6__:SWITCH_HOST_STATE");
+        "SUBSCRIBE __keyspace@6__:HOST_STATE|switch-host");
     
     if (!reply || reply->type == REDIS_REPLY_ERROR)
     {
@@ -396,9 +396,11 @@ void RedisStateSubscriber::handleKeyspaceNotification(const std::string& channel
     LOG_INFO( "[RedisStateSubscriber] Handling keyspace notification");
     LOG_INFO( "[RedisStateSubscriber] Channel: %s", channel.c_str());
 
-    // Channel format: __keyspace@6__:SWITCH_HOST_STATE
-    // Extract key name
-    size_t pos = channel.find_last_of(':');
+    // Channel format: __keyspace@<db>__:<TABLE>|<key>
+    // The first ':' separates the keyspace prefix from the SONiC key, which
+    // itself uses '|' as the table/key separator (no ':'), so find_first_of
+    // is the safe split.
+    size_t pos = channel.find_first_of(':');
     if (pos == std::string::npos)
     {
         LOG_WARNING( "[RedisStateSubscriber] Invalid channel format: %s", channel.c_str());

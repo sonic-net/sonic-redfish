@@ -393,9 +393,9 @@ void BridgeApp::startUpdateEngine()
 
     // Subscribe to multiple Redis keys for event-driven updates
     std::vector<std::string> keysToSubscribe = {
-        "DEVICE_METADATA",   // Serial number, platform, hostname
-        "CHASSIS_STATE",     // Power state
-        "SWITCH_HOST_STATE"  // Host state (for future use)
+        "DEVICE_METADATA",        // Serial number, platform, hostname
+        "CHASSIS_STATE",          // Power state
+        "HOST_STATE|switch-host"  // Host power state
     };
 
     // Register callback to UpdateEngine

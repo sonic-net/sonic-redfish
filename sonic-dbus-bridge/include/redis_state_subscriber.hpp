@@ -32,8 +32,8 @@ public:
     /**
      * @brief Callback function type
      * Parameters: (key, field, value)
-     * - key: Redis key that changed (e.g., "SWITCH_HOST_STATE", "DEVICE_METADATA")
-     * - field: Hash field that changed (e.g., "device_state", "serial_number")
+     * - key: Redis key that changed (e.g., "HOST_STATE|switch-host", "DEVICE_METADATA")
+     * - field: Hash field that changed (e.g., "device_power_state", "serial_number")
      * - value: New value of the field
      */
     using KeyspaceCallback = std::function<void(const std::string&,
@@ -100,7 +100,7 @@ private:
     
     /**
      * @brief Handle keyspace notification
-     * @param channel Channel name (e.g., "__keyspace@6__:SWITCH_HOST_STATE")
+     * @param channel Channel name (e.g., "__keyspace@6__:HOST_STATE|switch-host")
      */
     void handleKeyspaceNotification(const std::string& channel);
     

@@ -429,18 +429,22 @@ Content-Type: application/json
 {"ResetType": "On"}
 ```
 
-This action writes a host transition request to Redis STATE_DB:
+This action publishes a `RACK_MANAGER_COMMAND` row to STATE_DB which
+`sonic-bmcctld` (sonic-platform-daemons) consumes:
 
 ```
-root@sonic:/home/admin# redis-cli -n 6 HGETALL BMC_HOST_REQUEST
-1) "request_id"
-2) "req_1775040896_000001"
-3) "requested_transition"
-4) "reset-out"
-5) "status"
-6) "pending"
-7) "timestamp"
-8) "1775040896157648224"
+root@sonic:/home/admin# redis-cli -n 6 KEYS 'RACK_MANAGER_COMMAND|*'
+1) "RACK_MANAGER_COMMAND|CMD_1775040896_000001"
+
+root@sonic:/home/admin# redis-cli -n 6 HGETALL 'RACK_MANAGER_COMMAND|CMD_1775040896_000001'
+1) "command"
+2) "POWER_ON"
+3) "status"
+4) "PENDING"
+5) "result"
+6) ""
+7) "last_change_timestamp"
+8) "2026-05-08T12:34:56.157648Z"
 ```
 
 ### ComputerSystem.Reset - Graceful Shutdown
@@ -455,15 +459,15 @@ Content-Type: application/json
 Redis STATE_DB after the request:
 
 ```
-root@sonic:/home/admin# redis-cli -n 6 HGETALL BMC_HOST_REQUEST
-1) "request_id"
-2) "req_1775041067_000002"
-3) "requested_transition"
-4) "reset-in"
-5) "status"
-6) "pending"
-7) "timestamp"
-8) "1775041067766120204"
+root@sonic:/home/admin# redis-cli -n 6 HGETALL 'RACK_MANAGER_COMMAND|CMD_1775041067_000002'
+1) "command"
+2) "POWER_OFF"
+3) "status"
+4) "PENDING"
+5) "result"
+6) ""
+7) "last_change_timestamp"
+8) "2026-05-08T12:37:47.766120Z"
 ```
 
 ### ComputerSystem.Reset - Power Cycle
@@ -478,16 +482,22 @@ Content-Type: application/json
 Redis STATE_DB after the request:
 
 ```
-root@sonic:/home/admin# redis-cli -n 6 HGETALL BMC_HOST_REQUEST
-1) "request_id"
-2) "req_1775041121_000003"
-3) "requested_transition"
-4) "reset-cycle"
-5) "status"
-6) "pending"
-7) "timestamp"
-8) "1775041121924146637"
+root@sonic:/home/admin# redis-cli -n 6 HGETALL 'RACK_MANAGER_COMMAND|CMD_1775041121_000003'
+1) "command"
+2) "POWER_CYCLE"
+3) "status"
+4) "PENDING"
+5) "result"
+6) ""
+7) "last_change_timestamp"
+8) "2026-05-08T12:38:41.924146Z"
 ```
+
+`sonic-bmcctld` then transitions `status` to `IN_PROGRESS` and finally
+`DONE` or `FAILED`, writing a human-readable string into `result` on
+failure (e.g. `CRITICAL_LEAK_PRESENT`). Authoritative host power state
+is published by the daemon to `HOST_STATE|switch-host`
+(`device_power_state`, `device_status`, `last_change_timestamp`).
 
 ## Troubleshooting
 

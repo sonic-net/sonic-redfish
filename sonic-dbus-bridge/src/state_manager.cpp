@@ -208,28 +208,26 @@ void StateManager::executeHostTransition(const std::string& transition)
         return;
     }
 
-    // Map D-Bus transition to simple transition name
-    std::string transitionName = transitionToScriptCommand(transition);
-    if (transitionName.empty())
+    std::string command = transitionToScriptCommand(transition);
+    if (command.empty())
     {
-        LOG_ERROR("Failed to map transition to transition name");
+        LOG_ERROR("Failed to map transition to command");
         updateHostState(HOST_STATE_RUNNING);
         return;
     }
 
     // Publish to Redis STATE_DB
-    LOG_INFO("Publishing transition '%s' to Redis STATE_DB...", transitionName.c_str());
-    std::string requestId = redisPublisher_->publishHostRequest(transitionName);
+    LOG_INFO("Publishing command '%s' to RACK_MANAGER_COMMAND...", command.c_str());
+    std::string commandId = redisPublisher_->publishHostRequest(command);
 
-    if (requestId.empty())
+    if (commandId.empty())
     {
-        LOG_ERROR("Failed to publish host request to Redis");
+        LOG_ERROR("Failed to publish RACK_MANAGER_COMMAND to Redis");
         updateHostState(HOST_STATE_RUNNING);
         return;
     }
 
-    LOG_INFO("Host request published successfully to BMC_HOST_REQUEST");
-    LOG_INFO("Request ID: %s", requestId.c_str());
+    LOG_INFO("RACK_MANAGER_COMMAND|%s published successfully", commandId.c_str());
 
     // Update state based on transition
     if (transition == HOST_TRANS_OFF)
@@ -267,16 +265,17 @@ std::string StateManager::transitionToScriptCommand(const std::string& transitio
 {
     if (transition == HOST_TRANS_ON)
     {
-        return "reset-out";
+        return "POWER_ON";
     }
     else if (transition == HOST_TRANS_OFF)
     {
-        return "reset-in";
+        return "POWER_OFF";
     }
-    else if (transition == HOST_TRANS_REBOOT || transition == HOST_TRANS_POWER_CYCLE ||
+    else if (transition == HOST_TRANS_REBOOT ||
+             transition == HOST_TRANS_POWER_CYCLE ||
              transition == HOST_TRANS_FORCE_WARM_REBOOT)
     {
-        return "reset-cycle";
+        return "POWER_CYCLE";
     }
     else
     {

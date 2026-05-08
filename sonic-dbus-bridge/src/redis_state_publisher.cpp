@@ -13,9 +13,34 @@
 #include <sstream>
 #include <iomanip>
 #include <cstring>
+#include <ctime>
 
 namespace sonic::dbus_bridge
 {
+
+namespace
+{
+
+constexpr const char* TABLE_RACK_MANAGER_COMMAND = "RACK_MANAGER_COMMAND";
+constexpr const char* KEY_HOST_STATE             = "HOST_STATE|switch-host";
+constexpr const char* CMD_STATUS_PENDING         = "PENDING";
+
+// ISO 8601 UTC timestamp with microsecond precision.
+std::string isoUtcNow()
+{
+    auto now      = std::chrono::system_clock::now();
+    auto secs     = std::chrono::system_clock::to_time_t(now);
+    auto usPart   = std::chrono::duration_cast<std::chrono::microseconds>(
+                        now.time_since_epoch()).count() % 1'000'000;
+    std::tm tm{};
+    gmtime_r(&secs, &tm);
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S")
+        << '.' << std::setw(6) << std::setfill('0') << usPart << 'Z';
+    return oss.str();
+}
+
+} // namespace
 
 RedisStatePublisher::RedisStatePublisher()
     : stateDbContext_(nullptr), requestCounter_(0)
@@ -134,104 +159,111 @@ std::string RedisStatePublisher::generateRequestId()
     auto now = std::chrono::system_clock::now();
     auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(
         now.time_since_epoch()).count();
-    
+
     std::lock_guard<std::mutex> lock(redisMutex_);
     requestCounter_++;
-    
+
     std::ostringstream oss;
-    oss << "req_" << timestamp << "_" << std::setfill('0') << std::setw(6) << requestCounter_;
-    
+    oss << "CMD_" << timestamp << "_"
+        << std::setfill('0') << std::setw(6) << requestCounter_;
+
     std::string requestId = oss.str();
-    LOG_DEBUG( "[RedisStatePublisher] Generated request ID: %s", requestId.c_str());
-    
+    LOG_DEBUG( "[RedisStatePublisher] Generated command id: %s", requestId.c_str());
+
     return requestId;
 }
 
-std::string RedisStatePublisher::publishHostRequest(const std::string& transition)
+std::string RedisStatePublisher::publishHostRequest(const std::string& command)
 {
     LOG_INFO( "[RedisStatePublisher] ========================================");
-    LOG_INFO( "[RedisStatePublisher] Publishing host transition request");
-    LOG_INFO( "[RedisStatePublisher] Transition: %s", transition.c_str());
+    LOG_INFO( "[RedisStatePublisher] Publishing RACK_MANAGER_COMMAND");
+    LOG_INFO( "[RedisStatePublisher] command: %s", command.c_str());
 
-    std::string requestId = generateRequestId();
-    auto timestamp = std::chrono::system_clock::now().time_since_epoch().count();
+    std::string commandId = generateRequestId();
+    std::string timestamp = isoUtcNow();
 
     std::map<std::string, std::string> fields = {
-        {"requested_transition", transition},
-        {"request_id", requestId},
-        {"timestamp", std::to_string(timestamp)},
-        {"status", "pending"}
+        {"command",               command},
+        {"status",                CMD_STATUS_PENDING},
+        {"result",                ""},
+        {"last_change_timestamp", timestamp}
     };
 
-    LOG_INFO( "[RedisStatePublisher] Request details:");
-    LOG_INFO( "[RedisStatePublisher]   - request_id: %s", requestId.c_str());
-    LOG_INFO( "[RedisStatePublisher]   - requested_transition: %s", transition.c_str());
-    LOG_INFO( "[RedisStatePublisher]   - timestamp: %ld", timestamp);
-    LOG_INFO( "[RedisStatePublisher]   - status: pending");
+    LOG_INFO( "[RedisStatePublisher] Command details:");
+    LOG_INFO( "[RedisStatePublisher]   - command_id:            %s", commandId.c_str());
+    LOG_INFO( "[RedisStatePublisher]   - command:               %s", command.c_str());
+    LOG_INFO( "[RedisStatePublisher]   - status:                %s", CMD_STATUS_PENDING);
+    LOG_INFO( "[RedisStatePublisher]   - last_change_timestamp: %s", timestamp.c_str());
 
-    // Use SONiC table key format: TABLE_NAME|unique_key
-    std::string redisKey = "BMC_HOST_REQUEST|" + requestId;
+    std::string redisKey =
+        std::string(TABLE_RACK_MANAGER_COMMAND) + "|" + commandId;
 
     if (!hmset(redisKey, fields))
     {
-        LOG_ERROR( "[RedisStatePublisher] Failed to publish host request to Redis");
+        LOG_ERROR( "[RedisStatePublisher] Failed to publish RACK_MANAGER_COMMAND to Redis");
         LOG_ERROR( "[RedisStatePublisher] ========================================");
         return "";
     }
 
-    LOG_INFO( "[RedisStatePublisher] Host request published successfully to %s", redisKey.c_str());
+    LOG_INFO( "[RedisStatePublisher] Published successfully to %s", redisKey.c_str());
     LOG_INFO( "[RedisStatePublisher] ========================================");
 
-    return requestId;
+    return commandId;
 }
 
-bool RedisStatePublisher::updateSwitchHostState(const std::string& deviceState,
-                                                const std::string& deviceStatus)
+bool RedisStatePublisher::updateHostState(const std::string& devicePowerState,
+                                          const std::string& deviceStatus)
 {
     LOG_INFO( "[RedisStatePublisher] ========================================");
-    LOG_INFO( "[RedisStatePublisher] Updating SWITCH_HOST_STATE");
-    LOG_INFO( "[RedisStatePublisher]   - device_state: %s", deviceState.c_str());
-    LOG_INFO( "[RedisStatePublisher]   - device_status: %s", deviceStatus.c_str());
-    
+    LOG_INFO( "[RedisStatePublisher] Updating %s", KEY_HOST_STATE);
+    LOG_INFO( "[RedisStatePublisher]   - device_power_state: %s", devicePowerState.c_str());
+    LOG_INFO( "[RedisStatePublisher]   - device_status:      %s", deviceStatus.c_str());
+
     std::map<std::string, std::string> fields = {
-        {"device_state", deviceState},
-        {"device_status", deviceStatus}
+        {"device_power_state",    devicePowerState},
+        {"device_status",         deviceStatus},
+        {"last_change_timestamp", isoUtcNow()}
     };
-    
-    bool result = hmset("SWITCH_HOST_STATE", fields);
-    
+
+    bool result = hmset(KEY_HOST_STATE, fields);
+
     if (result)
     {
-        LOG_INFO( "[RedisStatePublisher] SWITCH_HOST_STATE updated successfully");
+        LOG_INFO( "[RedisStatePublisher] %s updated successfully", KEY_HOST_STATE);
     }
     else
     {
-        LOG_ERROR( "[RedisStatePublisher] Failed to update SWITCH_HOST_STATE");
+        LOG_ERROR( "[RedisStatePublisher] Failed to update %s", KEY_HOST_STATE);
     }
-    
+
     LOG_INFO( "[RedisStatePublisher] ========================================");
     return result;
 }
 
-bool RedisStatePublisher::updateRequestStatus(const std::string& requestId,
+bool RedisStatePublisher::updateRequestStatus(const std::string& commandId,
                                               const std::string& status)
 {
-    LOG_INFO( "[RedisStatePublisher] Updating request status");
-    LOG_INFO( "[RedisStatePublisher]   - request_id: %s", requestId.c_str());
-    LOG_INFO( "[RedisStatePublisher]   - status: %s", status.c_str());
+    LOG_INFO( "[RedisStatePublisher] Updating RACK_MANAGER_COMMAND status");
+    LOG_INFO( "[RedisStatePublisher]   - command_id: %s", commandId.c_str());
+    LOG_INFO( "[RedisStatePublisher]   - status:     %s", status.c_str());
 
-    // Use SONiC table key format: TABLE_NAME|unique_key
-    std::string redisKey = "BMC_HOST_REQUEST|" + requestId;
+    std::string redisKey =
+        std::string(TABLE_RACK_MANAGER_COMMAND) + "|" + commandId;
 
-    bool result = hset(redisKey, "status", status);
+    std::map<std::string, std::string> fields = {
+        {"status",                status},
+        {"last_change_timestamp", isoUtcNow()}
+    };
+
+    bool result = hmset(redisKey, fields);
 
     if (result)
     {
-        LOG_INFO( "[RedisStatePublisher] Request status updated successfully for %s", redisKey.c_str());
+        LOG_INFO( "[RedisStatePublisher] Status updated for %s", redisKey.c_str());
     }
     else
     {
-        LOG_ERROR( "[RedisStatePublisher] Failed to update request status for %s", redisKey.c_str());
+        LOG_ERROR( "[RedisStatePublisher] Failed to update status for %s", redisKey.c_str());
     }
 
     return result;

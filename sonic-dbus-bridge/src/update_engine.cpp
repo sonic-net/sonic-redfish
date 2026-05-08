@@ -183,11 +183,9 @@ void UpdateEngine::onRedisFieldChange(const std::string& key,
                 needsUpdate = true;
             }
         }
-        // Handle SWITCH_HOST_STATE changes (currently not mapped to D-Bus)
-        else if (key == "SWITCH_HOST_STATE")
+        else if (key == "HOST_STATE|switch-host")
         {
-            LOG_DEBUG("[UpdateEngine] SWITCH_HOST_STATE changed (not currently mapped to D-Bus)");
-            // Future: Map to host state D-Bus properties if needed
+            LOG_DEBUG("[UpdateEngine] HOST_STATE|switch-host changed (not currently mapped to D-Bus)");
         }
         else
         {
