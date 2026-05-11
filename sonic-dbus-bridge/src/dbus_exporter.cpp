@@ -16,7 +16,6 @@ namespace sonic::dbus_bridge
 // D-Bus interface names (OpenBMC standard)
 constexpr const char* IFACE_INVENTORY_CHASSIS = "xyz.openbmc_project.Inventory.Item.Chassis";
 constexpr const char* IFACE_DECORATOR_ASSET = "xyz.openbmc_project.Inventory.Decorator.Asset";
-constexpr const char* IFACE_DECORATOR_MODEL = "xyz.openbmc_project.Inventory.Decorator.Model";
 constexpr const char* IFACE_STATE_CHASSIS = "xyz.openbmc_project.State.Chassis";
 constexpr const char* IFACE_SOFTWARE_VERSION = "xyz.openbmc_project.Software.Version";
 constexpr const char* IFACE_SOFTWARE_ACTIVATION = "xyz.openbmc_project.Software.Activation";
@@ -105,17 +104,12 @@ bool DBusExporter::createChassisObject(const ChassisInfo& chassis)
         "Manufacturer", std::string(""),
         sdbusplus::vtable::property_::const_,
         [this](const auto&) { return currentModel_.chassis.manufacturer; });
-    assetIface->initialize();
-    interfaces_[std::string(OBJ_PATH_CHASSIS) + ":" + IFACE_DECORATOR_ASSET] = assetIface;
-
-    // Decorator.Model interface
-    auto modelIface = inventoryServer_.add_interface(OBJ_PATH_CHASSIS, IFACE_DECORATOR_MODEL);
-    modelIface->register_property_r<std::string>(
+    assetIface->register_property_r<std::string>(
         "Model", std::string(""),
         sdbusplus::vtable::property_::const_,
         [this](const auto&) { return currentModel_.chassis.model; });
-    modelIface->initialize();
-    interfaces_[std::string(OBJ_PATH_CHASSIS) + ":" + IFACE_DECORATOR_MODEL] = modelIface;
+    assetIface->initialize();
+    interfaces_[std::string(OBJ_PATH_CHASSIS) + ":" + IFACE_DECORATOR_ASSET] = assetIface;
 
     LOG_INFO("Created chassis object at %s", OBJ_PATH_CHASSIS);
     return true;
@@ -136,17 +130,12 @@ bool DBusExporter::createSystemObject(const SystemInfo& system)
         "Manufacturer", std::string(""),
         sdbusplus::vtable::property_::const_,
         [this](const auto&) { return currentModel_.system.manufacturer; });
-    assetIface->initialize();
-    interfaces_[std::string(OBJ_PATH_SYSTEM) + ":" + IFACE_DECORATOR_ASSET] = assetIface;
-
-    // Decorator.Model interface
-    auto modelIface = inventoryServer_.add_interface(OBJ_PATH_SYSTEM, IFACE_DECORATOR_MODEL);
-    modelIface->register_property_r<std::string>(
+    assetIface->register_property_r<std::string>(
         "Model", std::string(""),
         sdbusplus::vtable::property_::const_,
         [this](const auto&) { return currentModel_.system.model; });
-    modelIface->initialize();
-    interfaces_[std::string(OBJ_PATH_SYSTEM) + ":" + IFACE_DECORATOR_MODEL] = modelIface;
+    assetIface->initialize();
+    interfaces_[std::string(OBJ_PATH_SYSTEM) + ":" + IFACE_DECORATOR_ASSET] = assetIface;
 
     LOG_INFO("Created system object at %s", OBJ_PATH_SYSTEM);
     return true;

@@ -56,10 +56,11 @@ bool ObjectMapperService::initialize()
 
     mapperIface_->register_method(
         "GetAssociatedSubTreePaths",
-        [this](const std::string& associatedPath, const std::string& subtree,
-               int32_t depth, const std::vector<std::string>& interfaces) {
-            return getAssociatedSubTreePaths(associatedPath, subtree, depth,
-                                             interfaces);
+        [this](const sdbusplus::message::object_path& associatedPath,
+               const sdbusplus::message::object_path& subtree, int32_t depth,
+               const std::vector<std::string>& interfaces) {
+            return getAssociatedSubTreePaths(associatedPath.str, subtree.str,
+                                             depth, interfaces);
         });
 
     mapperIface_->initialize();

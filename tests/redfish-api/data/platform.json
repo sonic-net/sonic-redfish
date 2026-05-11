@@ -1,0 +1,7 @@
+{
+  "chassis": {
+    "name": "Test Chassis",
+    "part_number": "TEST-CHASSIS-001",
+    "hardware_version": "Rev A"
+  }
+}

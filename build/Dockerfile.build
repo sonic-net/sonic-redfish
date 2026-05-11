@@ -34,6 +34,9 @@ RUN apt-get update && apt-get install -y \
     python3-yaml \
     python3-mako \
     python3-inflection \
+    # C++ unit testing framework
+    libgtest-dev \
+    libgmock-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

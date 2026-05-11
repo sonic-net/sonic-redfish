@@ -1,0 +1,41 @@
+# Test configuration for sonic-dbus-bridge
+# Mirrors production config with paths suitable for the test container
+
+redis:
+  config_db:
+    host: localhost
+    port: 6379
+    db: 4
+    timeout_ms: 5000
+  state_db:
+    host: localhost
+    port: 6379
+    db: 6
+    timeout_ms: 5000
+  retry:
+    max_attempts: 3
+    initial_backoff_ms: 500
+    max_backoff_ms: 5000
+
+platform:
+  json_path: /workspace/tests/data/platform.json
+
+fru_eeprom:
+  auto_detect: false
+  paths: []
+
+dbus:
+  service_name: xyz.openbmc_project.Inventory
+  bus_type: system
+
+update:
+  poll_interval_seconds: 5
+
+logging:
+  level: DEBUG
+  use_systemd_journal: false
+
+features:
+  sensors: false
+  power_control: true
+  persistence: false
