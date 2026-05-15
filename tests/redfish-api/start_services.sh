@@ -20,7 +20,7 @@ echo "=== Redfish integration test: starting services ==="
 # -----------------------------------------------------------------------
 echo "[1/5] Starting dbus-daemon..."
 # Install D-Bus policy files so sonic-dbus-bridge can own its bus names
-cp /workspace/sonic-dbus-bridge/dbus/*.conf /etc/dbus-1/system.d/ 2>/dev/null || true
+cp /workspace/sonic-dbus-bridge/dbus/*.conf /etc/dbus-1/system.d/
 dbus-daemon --system --nofork --nopidfile &> "$LOG_DIR/dbus.log" &
 DBUS_PID=$!
 

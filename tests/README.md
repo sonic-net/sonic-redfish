@@ -37,7 +37,7 @@ non-zero if anything failed, so CI catches regressions automatically.
 ### Running a single test file
 
 ```bash
-docker run --rm --cap-add SYS_ADMIN -v /run/dbus:/run/dbus sonic-redfish-test:latest bash -c \
+docker run --rm --cap-add SYS_ADMIN --tmpfs /run/dbus sonic-redfish-test:latest bash -c \
     "bash tests/redfish-api/start_services.sh && \
      python3 -m pytest tests/redfish-api/test_chassis.py -v"
 ```

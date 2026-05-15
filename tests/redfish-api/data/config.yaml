@@ -29,7 +29,7 @@ dbus:
   bus_type: system
 
 update:
-  poll_interval_seconds: 5
+  poll_interval_seconds: 0.1
 
 logging:
   level: DEBUG

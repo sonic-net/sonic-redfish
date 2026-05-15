@@ -85,8 +85,8 @@ bool DBusExporter::createChassisObject(const ChassisInfo& chassis)
     chassisIface->register_property_r<std::string>(
         "Type", std::string(""),
         sdbusplus::vtable::property_::const_,
-        [](const auto&) {
-            return "xyz.openbmc_project.Inventory.Item.Chassis.ChassisType.RackMount";
+        [this](const auto&) {
+            return "xyz.openbmc_project.Inventory.Item.Chassis.ChassisType." + currentModel_.chassis.chassisType;
         });
     chassisIface->initialize();
     interfaces_[std::string(OBJ_PATH_CHASSIS) + ":" + IFACE_INVENTORY_CHASSIS] = chassisIface;

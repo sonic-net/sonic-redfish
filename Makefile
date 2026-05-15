@@ -390,7 +390,7 @@ ifdef NODELETE
 	@echo ">>> NODELETE=1: Container will be kept for debugging <<<"
 	@echo ""
 	@# Run container with tail -f /dev/null to keep it alive after tests
-	@docker run -d --cap-add SYS_ADMIN -v /run/dbus:/run/dbus --name sonic-redfish-test-debug $(DOCKER_TEST_IMAGE) \
+	@docker run -d --cap-add SYS_ADMIN --tmpfs /run/dbus --name sonic-redfish-test-debug $(DOCKER_TEST_IMAGE) \
 		bash -c 'bash tests/redfish-api/start_services.sh && python3 -u -m pytest tests/redfish-api/ -v --tb=short 2>&1 | python3 -u scripts/format_pytest_output.py; echo "Tests completed. Container staying alive for debugging..."; tail -f /dev/null' \
 		> /tmp/sonic-test-container-id.txt
 	@CONTAINER_ID=$$(cat /tmp/sonic-test-container-id.txt); \
@@ -420,7 +420,7 @@ ifdef NODELETE
 	echo "========================================="; \
 	rm -f /tmp/sonic-test-container-id.txt
 else
-	docker run --rm --cap-add SYS_ADMIN -v /run/dbus:/run/dbus $(DOCKER_TEST_IMAGE)
+	docker run --rm --cap-add SYS_ADMIN --tmpfs /run/dbus $(DOCKER_TEST_IMAGE)
 	@echo ""
 	@echo "========================================="
 	@echo "Tests completed!"

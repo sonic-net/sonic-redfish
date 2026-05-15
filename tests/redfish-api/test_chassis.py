@@ -4,6 +4,7 @@ Validates that sonic-dbus-bridge correctly publishes chassis inventory data
 from Redis CONFIG_DB → D-Bus → bmcweb Redfish.
 """
 
+import pytest
 from data.redis_seed import DEVICE_METADATA
 
 
@@ -33,41 +34,35 @@ class TestChassisInstance:
     bmcweb maps this to a Chassis member.
     """
 
-    def _get_chassis_uri(self, redfish) -> str:
+    @pytest.fixture(scope="class")
+    def chassis_uri(self, redfish) -> str:
         """Return the @odata.id of the first chassis member."""
         members = redfish.get("/redfish/v1/Chassis/").json()["Members"]
         return members[0]["@odata.id"]
 
-    def test_chassis_returns_200(self, redfish):
-        uri = self._get_chassis_uri(redfish)
-        assert redfish.get(uri).status_code == 200
+    def test_chassis_returns_200(self, redfish, chassis_uri):
+        assert redfish.get(chassis_uri).status_code == 200
 
-    def test_chassis_type(self, redfish):
-        uri = self._get_chassis_uri(redfish)
-        data = redfish.get(uri).json()
-        assert data["ChassisType"] == "RackMount"
+    def test_chassis_type(self, redfish, chassis_uri):
+        data = redfish.get(chassis_uri).json()
+        assert data["ChassisType"] == "StandAlone"
 
-    def test_serial_number_from_redis(self, redfish):
-        uri = self._get_chassis_uri(redfish)
-        data = redfish.get(uri).json()
+    def test_serial_number_from_redis(self, redfish, chassis_uri):
+        data = redfish.get(chassis_uri).json()
         assert data.get("SerialNumber") == DEVICE_METADATA["serial_number"]
 
-    def test_manufacturer_from_redis(self, redfish):
-        uri = self._get_chassis_uri(redfish)
-        data = redfish.get(uri).json()
+    def test_manufacturer_from_redis(self, redfish, chassis_uri):
+        data = redfish.get(chassis_uri).json()
         assert data.get("Manufacturer") == DEVICE_METADATA["manufacturer"]
 
-    def test_model_from_redis(self, redfish):
-        uri = self._get_chassis_uri(redfish)
-        data = redfish.get(uri).json()
+    def test_model_from_redis(self, redfish, chassis_uri):
+        data = redfish.get(chassis_uri).json()
         assert data.get("Model") == DEVICE_METADATA["model"]
 
-    def test_part_number_from_redis(self, redfish):
-        uri = self._get_chassis_uri(redfish)
-        data = redfish.get(uri).json()
+    def test_part_number_from_redis(self, redfish, chassis_uri):
+        data = redfish.get(chassis_uri).json()
         assert data.get("PartNumber") == DEVICE_METADATA["part_number"]
 
-    def test_thermal_subsystem_link(self, redfish):
-        uri = self._get_chassis_uri(redfish)
-        data = redfish.get(uri).json()
+    def test_thermal_subsystem_link(self, redfish, chassis_uri):
+        data = redfish.get(chassis_uri).json()
         assert "ThermalSubsystem" in data

@@ -126,6 +126,12 @@ ChassisInfo InventoryModelBuilder::buildChassisInfo(
         chassis.hardwareVersion = *platformDesc->chassisHardwareVersion;
     }
 
+    // Chassis Type: Redis > default
+    if (deviceMetadata && deviceMetadata->type)
+    {
+        chassis.chassisType = *deviceMetadata->type;
+    }
+
     // Pretty name: platform.json > FRU product name > default
     if (platformDesc && !platformDesc->chassisName.empty())
     {
