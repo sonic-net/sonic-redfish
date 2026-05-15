@@ -29,38 +29,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pytest \
     python3-requests \
     python3-redis \
-    # C++ unit testing framework
-    libgtest-dev \
-    libgmock-dev \
-    cmake \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
-
-# Build and install Google Test (libgtest-dev only provides source files)
-# Note: In Debian 13+, gtest and gmock are in /usr/src/googletest
-RUN if [ -d /usr/src/googletest ]; then \
-        cd /usr/src/googletest && \
-        cmake . && \
-        make && \
-        cp lib/*.a /usr/lib/ || true; \
-    elif [ -d /usr/src/gtest ]; then \
-        cd /usr/src/gtest && \
-        cmake . && \
-        make && \
-        cp lib/*.a /usr/lib/ || true; \
-    fi
 
 # Create user/group for bmcweb PAM authentication (bmcweb/bmcweb).
 # The bridge's user_mgr.cpp registers GetUserInfo only for the "bmcweb" user
 # (adminUserName), so the test PAM identity must match.
 RUN groupadd -f redfish && \
-    useradd -m -s /bin/false -g redfish -c "Redfish User" bmcweb 2>/dev/null || true && \
+    useradd -m -s /bin/false -g redfish -c "Redfish User" bmcweb && \
     echo "bmcweb:bmcweb" | chpasswd
 
 # Install the built .deb packages
 COPY target/debs/trixie/sonic-dbus-bridge_*.deb /tmp/
 COPY target/debs/trixie/bmcweb_*.deb /tmp/
-RUN dpkg -i /tmp/sonic-dbus-bridge_*.deb /tmp/bmcweb_*.deb 2>/dev/null || true && \
+RUN [ $(ls -1 /tmp/sonic-dbus-bridge_*.deb | wc -l) -eq 1 ] || { echo "Multiple or zero sonic-dbus-bridge debs found"; exit 1; } && \
+    [ $(ls -1 /tmp/bmcweb_*.deb | wc -l) -eq 1 ] || { echo "Multiple or zero bmcweb debs found"; exit 1; } && \
+    dpkg --force-depends -i /tmp/sonic-dbus-bridge_*.deb /tmp/bmcweb_*.deb && \
     apt-get -f install -y && \
     rm -f /tmp/*.deb
 

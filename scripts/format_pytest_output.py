@@ -126,20 +126,8 @@ def main():
     
     # Print summary
     print("\n" + "="*100)
-    total = passed + failed + skipped + errors
-    print(f"  SUMMARY: {total} tests")
-    
-    if passed > 0:
-        print(f"    \033[92m* {passed} passed\033[0m")
-    if failed > 0:
-        print(f"    \033[91mX {failed} failed\033[0m")
-    if skipped > 0:
-        print(f"    \033[93m- {skipped} skipped\033[0m")
-    if errors > 0:
-        print(f"    \033[91m! {errors} errors\033[0m")
-    
     print("="*100 + "\n")
-    
+
     # Exit with non-zero if there were failures
     sys.exit(1 if (failed > 0 or errors > 0) else 0)
 
