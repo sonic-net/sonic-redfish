@@ -10,6 +10,8 @@ import pytest
 import redis
 import requests
 
+# This absolute import from the 'data' package works because pytest.ini
+# configures testpaths='tests/redfish-api', adding it to sys.path during test runs.
 from data.redis_seed import seed
 
 # Suppress TLS warnings -- bmcweb uses a self-signed certificate in tests

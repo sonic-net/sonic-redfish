@@ -5,6 +5,8 @@ from Redis CONFIG_DB → D-Bus → bmcweb Redfish.
 """
 
 import pytest
+# This absolute import from the 'data' package works because pytest.ini
+# configures testpaths='tests/redfish-api', adding it to sys.path during test runs.
 from data.redis_seed import DEVICE_METADATA
 
 
