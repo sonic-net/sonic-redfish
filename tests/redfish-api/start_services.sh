@@ -78,9 +78,10 @@ done
 if ! dbus-send --system --dest=org.freedesktop.DBus --print-reply \
     /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null \
     | grep -q "xyz.openbmc_project.Inventory"; then
-    echo "WARNING: sonic-dbus-bridge may not be fully ready"
-    echo "  bridge log tail:"
+    echo "FATAL: sonic-dbus-bridge may not be fully ready" >&2
+    echo "  bridge log tail:" >&2
     tail -20 "$LOG_DIR/bridge.log" 2>/dev/null || true
+    exit 1
 fi
 echo "  sonic-dbus-bridge started (pid=$BRIDGE_PID)"
 
@@ -106,9 +107,10 @@ for i in $(seq 1 60); do
 done
 if ! curl -sk --max-time 2 -o /dev/null \
     https://localhost:443/redfish/v1/ 2>/dev/null; then
-    echo "WARNING: bmcweb may not be ready on port 443"
-    echo "  bmcweb log tail:"
+    echo "FATAL: bmcweb may not be ready on port 443" >&2
+    echo "  bmcweb log tail:" >&2
     tail -20 "$LOG_DIR/bmcweb.log" 2>/dev/null || true
+    exit 1
 fi
 echo "  bmcweb started (pid=$BMCWEB_PID)"
 

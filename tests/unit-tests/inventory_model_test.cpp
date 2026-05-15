@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 #include "inventory_model.hpp"
 
-using namespace sonic::dbus_bridge;
+namespace sonic::dbus_bridge::test {
 
 // ---------------------------------------------------------------------------
 // InventoryModelBuilder::build -- precedence: Redis > FRU > platform.json
@@ -189,3 +189,6 @@ TEST(HasChanged, IgnoresPsuFanListChanges)
     b.psus.push_back(PsuInfo{.name = "psu1"});
     EXPECT_FALSE(hasChanged(a, b));
 }
+
+} // namespace sonic::dbus_bridge::test
+

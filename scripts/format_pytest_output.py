@@ -95,20 +95,18 @@ def main():
     failed = 0
     skipped = 0
     errors = 0
-    total = 0
 
     for line in sys.stdin:
         parsed = parse_pytest_line(line)
         if not parsed:
             # Pass through non-test lines (summaries, errors, etc.)
-            if any(keyword in line for keyword in ['FAILED', 'ERROR', 'passed', 'failed', '====', '----']):
+            if any(re.search(fr'\b{keyword}\b', line) for keyword in ['FAILED', 'ERROR', 'passed', 'failed']) or '====' in line or '----' in line:
                 print(line.rstrip())
             continue
-        
+
         test_path, status, progress, _ = parsed
 
         # Count by status
-        total += 1
         if status == 'PASSED':
             passed += 1
         elif status == 'FAILED':

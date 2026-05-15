@@ -18,7 +18,7 @@ redis:
     max_backoff_ms: 5000
 
 platform:
-  json_path: /workspace/tests/data/platform.json
+  json_path: /workspace/tests/redfish-api/data/platform.json
 
 fru_eeprom:
   auto_detect: false

@@ -322,20 +322,23 @@ void BridgeApp::createDbusObjects()
         objectMapper_->registerObject(
             "/xyz/openbmc_project/inventory/system/chassis",
             {"xyz.openbmc_project.Inventory.Item.Chassis",
-             "xyz.openbmc_project.Inventory.Decorator.Asset",
-             "xyz.openbmc_project.Inventory.Decorator.Model"});
+             "xyz.openbmc_project.Inventory.Decorator.Asset"});
 
-        // System inventory object (no Item.System interface yet,
-        // only common decorators)
+        // System inventory object
         objectMapper_->registerObject(
             "/xyz/openbmc_project/inventory/system/system0",
-            {"xyz.openbmc_project.Inventory.Decorator.Asset",
-             "xyz.openbmc_project.Inventory.Decorator.Model"});
+            {"xyz.openbmc_project.Inventory.Item.System",
+             "xyz.openbmc_project.Inventory.Decorator.Asset"});
 
         // Chassis state object
         objectMapper_->registerObject(
             "/xyz/openbmc_project/state/chassis0",
             {"xyz.openbmc_project.State.Chassis"});
+
+        // Host state object
+        objectMapper_->registerObject(
+            "/xyz/openbmc_project/state/host0",
+            {"xyz.openbmc_project.State.Host"});
 
         // Firmware inventory objects (for /redfish/v1/UpdateService/FirmwareInventory)
         for (const auto& fw : currentModel_.firmwareVersions)

@@ -18,7 +18,6 @@ DEVICE_METADATA = {
     "hwsku": "TEST-HWSKU-001",
     "hostname": "sonic-test-switch",
     "mac": "00:11:22:33:44:55",
-    "type": "Router",
     "manufacturer": "TestManufacturer",
     "serial_number": "TST-SN-000001",
     "part_number": "TST-PN-000001",
@@ -31,11 +30,6 @@ FIRMWARE = {
 }
 
 CHASSIS_STATE = {"power_state": "on"}
-
-HOST_STATE = {
-    "device_state": "powered_on",
-    "device_status": "running",
-}
 
 
 def seed(host: str = "localhost", port: int = 6379) -> None:
@@ -53,7 +47,6 @@ def seed(host: str = "localhost", port: int = 6379) -> None:
     state_db.hset("CHASSIS_STATE|chassis0", mapping=CHASSIS_STATE)
     for name, fields in FIRMWARE.items():
         state_db.hset(f"BMC_FW_INVENTORY|{name}", mapping=fields)
-    state_db.hset("SWITCH_HOST_STATE", mapping=HOST_STATE)
 
     print("redis: test data seeded (CONFIG_DB=4, STATE_DB=6)")
 

@@ -10,6 +10,8 @@ import pytest
 import redis
 import requests
 
+from data.redis_seed import seed
+
 # Suppress TLS warnings -- bmcweb uses a self-signed certificate in tests
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -57,6 +59,16 @@ class RedfishClient:
         return self.session.delete(
             f"{self.base}{path}", timeout=TIMEOUT, **kwargs
         )
+
+
+@pytest.fixture(scope="function", autouse=True)
+def reset_redis_state():
+    """Function-scoped fixture to reset Redis state before every test.
+
+    Ensures tests start with a clean, known-good Redis state and prevents
+    ordering coupling when tests mutate CONFIG_DB or STATE_DB.
+    """
+    seed()
 
 
 @pytest.fixture(scope="session")

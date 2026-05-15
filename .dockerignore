@@ -1,0 +1,4 @@
+bmcweb/obj-*
+sonic-dbus-bridge/obj-*
+bmcweb/subprojects
+build/

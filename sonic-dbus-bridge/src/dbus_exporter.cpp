@@ -15,6 +15,7 @@ namespace sonic::dbus_bridge
 
 // D-Bus interface names (OpenBMC standard)
 constexpr const char* IFACE_INVENTORY_CHASSIS = "xyz.openbmc_project.Inventory.Item.Chassis";
+constexpr const char* IFACE_INVENTORY_SYSTEM = "xyz.openbmc_project.Inventory.Item.System";
 constexpr const char* IFACE_DECORATOR_ASSET = "xyz.openbmc_project.Inventory.Decorator.Asset";
 constexpr const char* IFACE_STATE_CHASSIS = "xyz.openbmc_project.State.Chassis";
 constexpr const char* IFACE_SOFTWARE_VERSION = "xyz.openbmc_project.Software.Version";
@@ -119,6 +120,11 @@ bool DBusExporter::createSystemObject(const SystemInfo& system)
 {
     // Store system data in currentModel_ for property getters
     currentModel_.system = system;
+
+    // Item.System interface (REQUIRED by bmcweb for system discovery!)
+    auto systemIface = inventoryServer_.add_interface(OBJ_PATH_SYSTEM, IFACE_INVENTORY_SYSTEM);
+    systemIface->initialize();
+    interfaces_[std::string(OBJ_PATH_SYSTEM) + ":" + IFACE_INVENTORY_SYSTEM] = systemIface;
 
     // Decorator.Asset interface
     auto assetIface = inventoryServer_.add_interface(OBJ_PATH_SYSTEM, IFACE_DECORATOR_ASSET);

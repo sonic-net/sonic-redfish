@@ -28,7 +28,7 @@ make build         # build the .deb packages first
 make test          # builds sonic-redfish-test:latest, runs pytest
 ```
 
-`make test` runs the whole suite under `--privileged` Docker (needed
+`make test` runs the whole suite under `--cap-add SYS_ADMIN` Docker (needed
 because dbus-daemon binds the system bus socket). Output is piped
 through [scripts/format_pytest_output.py](../scripts/format_pytest_output.py)
 for an aligned `[PASS]/[FAIL]/[SKIP]` table; the container exits
@@ -37,7 +37,7 @@ non-zero if anything failed, so CI catches regressions automatically.
 ### Running a single test file
 
 ```bash
-docker run --rm --privileged sonic-redfish-test:latest bash -c \
+docker run --rm --cap-add SYS_ADMIN -v /run/dbus:/run/dbus sonic-redfish-test:latest bash -c \
     "bash tests/redfish-api/start_services.sh && \
      python3 -m pytest tests/redfish-api/test_chassis.py -v"
 ```
@@ -90,12 +90,6 @@ other.
 |--------------------------------------------------------------------------|-------------------------------------------------------------------------|
 | [test_service_root.py](redfish-api/test_service_root.py)                 | `/redfish/v1/`, `Product=SONiCBMC`, auth enforcement                    |
 | [test_chassis.py](redfish-api/test_chassis.py)                           | inventory fields surfaced from CONFIG_DB `DEVICE_METADATA`              |
-| [test_systems.py](redfish-api/test_systems.py)                           | `ComputerSystem.Reset` → `BMC_HOST_REQUEST` round-trip via STATE_DB     |
-| [test_accounts.py](redfish-api/test_accounts.py)                         | AccountService, admin user, `RoleId == "Administrator"`                 |
-| [test_firmware.py](redfish-api/test_firmware.py)                         | FirmwareInventory versions sourced from the Redis seed                  |
-| [test_managers.py](redfish-api/test_managers.py)                         | BMC manager endpoints                                                   |
-| [test_leak_detection.py](redfish-api/test_leak_detection.py)             | **Skipped** — endpoints not implemented on this branch                  |
-| [test_oem_extensions.py](redfish-api/test_oem_extensions.py)             | **Skipped** — `SONiC.SubmitAlert` / `SONiC.SubmitTelemetry` not implemented |
 
 Skipped modules use `pytestmark = pytest.mark.skip(...)` at the top of
 the file — they show up as `[SKIP]` in the formatted output, never

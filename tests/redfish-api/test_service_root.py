@@ -1,5 +1,6 @@
 """Tests for /redfish/v1/ ServiceRoot."""
 
+import requests
 from data.redis_seed import DEVICE_METADATA
 
 
@@ -30,7 +31,6 @@ class TestServiceRoot:
 
     def test_unauthenticated_returns_401(self, redfish):
         """Requests without credentials must be rejected."""
-        import requests
         resp = requests.get(
             "https://localhost:443/redfish/v1/AccountService/",
             verify=False, timeout=10,
