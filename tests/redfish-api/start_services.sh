@@ -1,4 +1,13 @@
 #!/bin/bash
+#######################################
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 Nexthop AI
+# Copyright (C) 2024 SONiC Project
+# Author: Nexthop AI
+# Author: SONiC Project
+# License file: sonic-redfish/LICENSE
+#######################################
+
 # Start all services needed for Redfish integration tests.
 #
 # - dbus-daemon -> redis-server -> sonic-dbus-bridge -> bmcweb

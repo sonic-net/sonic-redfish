@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+#######################################
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 Nexthop AI
+# Copyright (C) 2024 SONiC Project
+# Author: Nexthop AI
+# Author: SONiC Project
+# License file: sonic-redfish/LICENSE
+#######################################
+
 """Seed Redis with deterministic test data for Redfish integration tests.
 
 Populates CONFIG_DB (db 4) and STATE_DB (db 6) with known values so that

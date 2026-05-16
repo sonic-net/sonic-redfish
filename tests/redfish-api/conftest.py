@@ -1,3 +1,12 @@
+#######################################
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 Nexthop AI
+# Copyright (C) 2024 SONiC Project
+# Author: Nexthop AI
+# Author: SONiC Project
+# License file: sonic-redfish/LICENSE
+#######################################
+
 """Shared pytest fixtures for Redfish integration tests.
 
 These fixtures assume the test services (dbus-daemon, redis, sonic-dbus-bridge,
