@@ -43,17 +43,15 @@ through [scripts/format_pytest_output.py](../scripts/format_pytest_output.py)
 for an aligned `[PASS]/[FAIL]/[SKIP]` table; the container exits
 non-zero if anything failed, so CI catches regressions automatically.
 
-### Running a single test file
+### Running a single test
 
 ```bash
 docker run --rm --cap-add SYS_ADMIN --tmpfs /run/dbus sonic-redfish-test:latest bash -c \
     "bash tests/redfish-api/start_services.sh && \
-     python3 -m pytest tests/redfish-api/test_chassis.py -v"
+     python3 -m pytest tests/redfish-api/ -k \"chassis\" -v"
 ```
 
-Replace `test_chassis.py` with whatever module you want. You can also
-target a class (`-k TestChassisCollection`) or a single test
-(`-k test_admin_role`).
+Replace `"chassis"` with whatever case file or specific test name you want. You can target an entire suite (`-k "service_root"`) or a single test case (`-k "chassis::test_chassis_type"`).
 
 ### Connection details
 
@@ -78,46 +76,58 @@ Defined in [redfish-api/conftest.py](redfish-api/conftest.py).
 ### Test data — single source of truth
 
 Seed values live in [redfish-api/data/redis_seed.py](redfish-api/data/redis_seed.py)
-as module-level constants. Tests **import the same constants** when
-asserting:
+as module-level constants. The framework resolves these dynamically in the JSON tests using templating:
 
-```python
-from data.redis_seed import DEVICE_METADATA
-
-def test_serial_number_from_redis(redfish):
-    body = redfish.get("/redfish/v1/Chassis/chassis0").json()
-    assert body["SerialNumber"] == DEVICE_METADATA["serial"]
+```json
+{
+  "name": "test_serial_number_from_redis",
+  "method": "GET",
+  "endpoint": "{{STATE.CHASSIS_URI}}",
+  "expected_response": {
+    "SerialNumber": "{{SEED.DEVICE_METADATA.serial_number}}"
+  }
+}
 ```
 
-Never hardcode expected values inside test files — the seeder and the
-expectation will drift the moment someone tweaks one and forgets the
-other.
+Never hardcode expected values inside JSON files — the seeder and the expectation will drift. Use `{{SEED.<dict>.<key>}}` to link assertions directly to the seeded Redis data.
+
+### Self-Contained Tests (Option B)
+
+Tests are executed sequentially, but they do not rely on a globally shared state across files. Instead, tests use `prerequisite_calls` to fetch whatever local state they need (e.g. finding a valid Chassis URI) right before executing the main test:
+
+```json
+"prerequisite_calls": [
+  {
+    "endpoint": "/redfish/v1/Chassis/",
+    "extract": { "CHASSIS_URI": "Members[0].@odata.id" }
+  }
+]
+```
 
 ### What's currently covered
 
 | File                                                                     | Scope                                                                   |
 |--------------------------------------------------------------------------|-------------------------------------------------------------------------|
-| [test_service_root.py](redfish-api/test_service_root.py)                 | `/redfish/v1/`, `Product=SONiCBMC`, auth enforcement                    |
-| [test_chassis.py](redfish-api/test_chassis.py)                           | inventory fields surfaced from CONFIG_DB `DEVICE_METADATA`              |
+| [cases/service_root.json](redfish-api/cases/service_root.json)           | `/redfish/v1/`, `Product=SONiCBMC`, auth enforcement                    |
+| [cases/chassis.json](redfish-api/cases/chassis.json)                     | inventory fields surfaced from CONFIG_DB `DEVICE_METADATA`              |
 
-Skipped modules use `pytestmark = pytest.mark.skip(...)` at the top of
-the file — they show up as `[SKIP]` in the formatted output, never
-red.
+Skipped modules use `"skip": true` or similar logic in the framework if needed.
 
 ### Adding a new integration test
+
+The framework is JSON-driven, meaning you don't write Python code to add tests.
 
 1. Pick a Redfish resource you want to cover.
 2. If the test needs new fixture data, add it to
    [redfish-api/data/redis_seed.py](redfish-api/data/redis_seed.py)
    as a module-level constant.
-3. Create `redfish-api/test_<resource>.py`. Use the `redfish`,
-   `state_db`, and `config_db` fixtures from `conftest.py`. Import
-   seeded constants for assertions — don't repeat the literal value.
-4. Run `make test`. No registration step, no Makefile edit — pytest
-   discovers `test_*.py` automatically.
+3. Create a new JSON file under `redfish-api/cases/` (or append to an existing one).
+4. Define your `endpoint`, `method`, `expected_status` and validation criteria (`expected_response` for subset matching, or specific `validators`).
+5. If the test needs dynamic runtime data (like a URI), add `prerequisite_calls` to fetch and store it.
+6. Run `make test`. No registration step, no Makefile edit — the pytest runner (`test_runner.py`) discovers `.json` files automatically.
 
 When asserting on D-Bus state, prefer reading back through Redfish
-(end-to-end). Only drop down to the Redis fixtures when the assertion
+(end-to-end). Only drop down to the Redis fixtures (by extending Python code) when the assertion
 is about state that Redfish doesn't surface (e.g. `BMC_HOST_REQUEST`
 after a reset).
 

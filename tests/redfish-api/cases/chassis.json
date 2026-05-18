@@ -1,0 +1,159 @@
+[
+  {
+    "name": "test_collection_returns_200",
+    "description": "Validates Collection returns 200",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Chassis/",
+    "expected_status": 200
+  },
+  {
+    "name": "test_collection_has_members",
+    "description": "Validates Collection has members",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Chassis/",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "length_gte",
+        "path": "Members",
+        "value": 1
+      }
+    ]
+  },
+  {
+    "name": "test_odata_type",
+    "description": "Validates Odata type",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Chassis/",
+    "expected_status": 200,
+    "expected_response": {
+      "@odata.type": "#ChassisCollection.ChassisCollection"
+    }
+  },
+  {
+    "name": "test_chassis_returns_200",
+    "description": "Validates Chassis returns 200",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}",
+    "expected_status": 200,
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": {
+          "CHASSIS_URI": "Members[0].@odata.id"
+        }
+      }
+    ]
+  },
+  {
+    "name": "test_chassis_type",
+    "description": "Validates Chassis type",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}",
+    "expected_status": 200,
+    "expected_response": {
+      "ChassisType": "StandAlone"
+    },
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": {
+          "CHASSIS_URI": "Members[0].@odata.id"
+        }
+      }
+    ]
+  },
+  {
+    "name": "test_serial_number_from_redis",
+    "description": "Validates Serial number from redis",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}",
+    "expected_status": 200,
+    "expected_response": {
+      "SerialNumber": "{{SEED.DEVICE_METADATA.serial_number}}"
+    },
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": {
+          "CHASSIS_URI": "Members[0].@odata.id"
+        }
+      }
+    ]
+  },
+  {
+    "name": "test_manufacturer_from_redis",
+    "description": "Validates Manufacturer from redis",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}",
+    "expected_status": 200,
+    "expected_response": {
+      "Manufacturer": "{{SEED.DEVICE_METADATA.manufacturer}}"
+    },
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": {
+          "CHASSIS_URI": "Members[0].@odata.id"
+        }
+      }
+    ]
+  },
+  {
+    "name": "test_model_from_redis",
+    "description": "Validates Model from redis",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}",
+    "expected_status": 200,
+    "expected_response": {
+      "Model": "{{SEED.DEVICE_METADATA.model}}"
+    },
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": {
+          "CHASSIS_URI": "Members[0].@odata.id"
+        }
+      }
+    ]
+  },
+  {
+    "name": "test_part_number_from_redis",
+    "description": "Validates Part number from redis",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}",
+    "expected_status": 200,
+    "expected_response": {
+      "PartNumber": "{{SEED.DEVICE_METADATA.part_number}}"
+    },
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": {
+          "CHASSIS_URI": "Members[0].@odata.id"
+        }
+      }
+    ]
+  },
+  {
+    "name": "test_thermal_subsystem_link",
+    "description": "Validates Thermal subsystem link",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "exists",
+        "path": "ThermalSubsystem"
+      }
+    ],
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": {
+          "CHASSIS_URI": "Members[0].@odata.id"
+        }
+      }
+    ]
+  }
+]

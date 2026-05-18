@@ -66,4 +66,4 @@ WORKDIR /workspace
 
 # Start services and run tests with formatted output
 # Using unbuffered output (-u) to show progress in real-time
-CMD ["bash", "-c", "bash tests/redfish-api/start_services.sh && python3 -u -m pytest tests/redfish-api/ -v --tb=short 2>&1 | python3 -u scripts/format_pytest_output.py"]
+CMD ["bash", "-c", "bash tests/redfish-api/start_services.sh && python3 -u -m pytest tests/redfish-api/ -v --tb=short 2>&1 | tee -a test_report.log | python3 -u scripts/format_pytest_output.py"]

@@ -1,0 +1,126 @@
+[
+  {
+    "name": "test_root_returns_200",
+    "description": "Validates Root returns 200",
+    "method": "GET",
+    "endpoint": "/redfish/v1/",
+    "expected_status": 200
+  },
+  {
+    "name": "test_odata_type",
+    "description": "Validates Odata type",
+    "method": "GET",
+    "endpoint": "/redfish/v1/",
+    "expected_status": 200,
+    "expected_response": {
+      "@odata.type": "#ServiceRoot.v1_15_0.ServiceRoot"
+    }
+  },
+  {
+    "name": "test_product_is_sonic_bmc",
+    "description": "Validates Product is sonic bmc",
+    "method": "GET",
+    "endpoint": "/redfish/v1/",
+    "expected_status": 200,
+    "expected_response": {
+      "Product": "SONiCBMC"
+    }
+  },
+  {
+    "name": "test_product_is_not_empty",
+    "description": "Validates Product is not empty",
+    "method": "GET",
+    "endpoint": "/redfish/v1/",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "not_equals",
+        "path": "Product",
+        "value": "Unknown"
+      }
+    ]
+  },
+  {
+    "name": "test_root_post_method_not_allowed",
+    "description": "Validates Root post method not allowed",
+    "method": "POST",
+    "endpoint": "/redfish/v1/",
+    "expected_status": 405
+  },
+  {
+    "name": "test_redfish_version",
+    "description": "Validates Redfish version",
+    "method": "GET",
+    "endpoint": "/redfish/v1/",
+    "expected_status": 200,
+    "expected_response": {
+      "RedfishVersion": "1.17.0"
+    }
+  },
+  {
+    "name": "test_required_collections",
+    "description": "Validates Required collections",
+    "method": "GET",
+    "endpoint": "/redfish/v1/",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "exists",
+        "path": "Chassis"
+      },
+      {
+        "type": "exists",
+        "path": "Systems"
+      },
+      {
+        "type": "exists",
+        "path": "Managers"
+      },
+      {
+        "type": "exists",
+        "path": "AccountService"
+      },
+      {
+        "type": "exists",
+        "path": "SessionService"
+      }
+    ]
+  },
+  {
+    "name": "test_unauthenticated_returns_401",
+    "description": "Validates Unauthenticated returns 401",
+    "method": "GET",
+    "endpoint": "/redfish/v1/AccountService/",
+    "auth": false,
+    "expected_status": 401
+  },
+  {
+    "name": "test_redfish_versions",
+    "description": "Validates Redfish versions",
+    "method": "GET",
+    "endpoint": "/redfish",
+    "expected_status": 200
+  },
+  {
+    "name": "test_redfish_v1_no_trailing_slash",
+    "description": "Validates Redfish v1 no trailing slash",
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/",
+        "extract": {
+          "SERVICE_ROOT_FULL": "$"
+        }
+      }
+    ],
+    "method": "GET",
+    "endpoint": "/redfish/v1",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "equals_state",
+        "path": "$",
+        "value": "SERVICE_ROOT_FULL"
+      }
+    ]
+  }
+]
