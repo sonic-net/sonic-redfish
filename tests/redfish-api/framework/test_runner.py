@@ -14,6 +14,7 @@ import requests
 from pathlib import Path
 from data.redis_seed import DEVICE_METADATA
 from framework.utils import resolve_dict, resolve_template, assert_subset, run_validators, extract_path
+from framework.validator import validate_test_file
 
 CASES_DIR = Path(__file__).parent.parent / "cases"
 
@@ -37,6 +38,11 @@ def load_cases():
     if not CASES_DIR.exists():
         return cases
     for json_file in CASES_DIR.glob("*.json"):
+        errors = validate_test_file(json_file)
+        if errors:
+            error_msg = f"Validation failed for {json_file.name}:\n" + "\n".join(f"  - {e}" for e in errors)
+            raise ValueError(error_msg)
+
         with open(json_file) as f:
             data = json.load(f)
             for case in data:

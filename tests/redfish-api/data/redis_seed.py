@@ -19,7 +19,7 @@ import sys
 
 
 # ---------------------------------------------------------------------------
-# Test constants -- tests/conftest.py imports these for assertions
+# Test constants -- tests/redfish-api/framework/conftest.py imports these for assertions
 # ---------------------------------------------------------------------------
 
 DEVICE_METADATA = {

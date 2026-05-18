@@ -47,7 +47,7 @@ non-zero if anything failed, so CI catches regressions automatically.
 
 ```bash
 docker run --rm --cap-add SYS_ADMIN --tmpfs /run/dbus sonic-redfish-test:latest bash -c \
-    "bash tests/redfish-api/start_services.sh && \
+    "bash tests/redfish-api/framework/start_services.sh && \
      python3 -m pytest tests/redfish-api/ -k \"chassis\" -v"
 ```
 
@@ -63,7 +63,7 @@ Replace `"chassis"` with whatever case file or specific test name you want. You 
 | Redis CONFIG_DB | `localhost:6379` db `4`                |
 | Redis STATE_DB  | `localhost:6379` db `6`                |
 
-Defined in [redfish-api/conftest.py](redfish-api/conftest.py).
+Defined in [redfish-api/framework/conftest.py](redfish-api/framework/conftest.py).
 
 ### Fixtures (all session-scoped)
 
@@ -270,17 +270,6 @@ For sanitizer runs, add `-fsanitize=address,undefined`.
 | Test file                                                                | Target                                                       |
 |--------------------------------------------------------------------------|--------------------------------------------------------------|
 | [inventory_model_test.cpp](unit-tests/inventory_model_test.cpp)          | `InventoryModelBuilder::build` precedence + `hasChanged`     |
-
-### Non-goals
-
-- **No mocking framework (gmock).** If a test needs mocks, the class
-  is too coupled — cover it in the integration suite instead.
-- **No in-process Redis / D-Bus fakes.** Same reason.
-- **No coverage of orchestration classes** (`main`, `bridge_app`,
-  `state_manager`, `update_engine`).
-
-Keeping the scope tight is the point. If this starts needing a build
-system of its own, we've drifted.
 
 ---
 

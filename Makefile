@@ -402,7 +402,7 @@ ifdef NODELETE
 	@echo ">" > $(REPO_ROOT)/test_report.log
 	@chmod 666 $(REPO_ROOT)/test_report.log
 	@docker run -d -v $(REPO_ROOT)/test_report.log:/workspace/test_report.log --cap-add SYS_ADMIN --tmpfs /run/dbus --name sonic-redfish-test-debug $(DOCKER_TEST_IMAGE) \
-		bash -c 'bash tests/redfish-api/start_services.sh && python3 -u -m pytest tests/redfish-api/ -v --tb=short 2>&1 | tee -a test_report.log | python3 -u scripts/format_pytest_output.py; echo "Tests completed. Container staying alive for debugging..."; tail -f /dev/null' \
+		bash -c 'bash tests/redfish-api/framework/start_services.sh && python3 -u -m pytest tests/redfish-api/ -v --tb=short 2>&1 | tee -a test_report.log | python3 -u scripts/format_pytest_output.py; echo "Tests completed. Container staying alive for debugging..."; tail -f /dev/null' \
 		> /tmp/sonic-test-container-id.txt
 	@CONTAINER_ID=$$(cat /tmp/sonic-test-container-id.txt); \
 	echo "Container ID: $$CONTAINER_ID"; \

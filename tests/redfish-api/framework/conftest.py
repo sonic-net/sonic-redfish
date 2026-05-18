@@ -10,7 +10,7 @@
 """Shared pytest fixtures for Redfish integration tests.
 
 These fixtures assume the test services (dbus-daemon, redis, sonic-dbus-bridge,
-bmcweb) are already running -- started by tests/start_services.sh before pytest
+bmcweb) are already running -- started by tests/redfish-api/framework/start_services.sh before pytest
 is invoked.
 """
 

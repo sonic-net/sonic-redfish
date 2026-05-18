@@ -24,10 +24,10 @@ mkdir -p "$LOG_DIR" /run/dbus /var/lib/sonic-dbus-bridge
 
 echo "=== Redfish integration test: starting services ==="
 
-# -----------------------------------------------------------------------
-# 1. D-Bus system bus
-# -----------------------------------------------------------------------
-echo "[1/5] Starting dbus-daemon..."
+# -----------------
+# D-Bus system bus
+# -----------------
+echo " Starting dbus-daemon..."
 # Install D-Bus policy files so sonic-dbus-bridge can own its bus names
 cp /workspace/sonic-dbus-bridge/dbus/*.conf /etc/dbus-1/system.d/
 dbus-daemon --system --nofork --nopidfile &> "$LOG_DIR/dbus.log" &
@@ -44,10 +44,10 @@ if [ ! -S /run/dbus/system_bus_socket ]; then
 fi
 echo "  dbus-daemon ready (pid=$DBUS_PID)"
 
-# -----------------------------------------------------------------------
-# 2. Redis
-# -----------------------------------------------------------------------
-echo "[2/5] Starting redis-server..."
+# -----
+# Redis
+# -----
+echo "Starting redis-server..."
 redis-server --daemonize yes --logfile "$LOG_DIR/redis.log" --loglevel warning
 
 for i in $(seq 1 30); do
@@ -60,17 +60,17 @@ if ! redis-cli ping 2>/dev/null | grep -q PONG; then
 fi
 echo "  redis-server ready"
 
-# -----------------------------------------------------------------------
-# 3. Seed Redis with test data
-# -----------------------------------------------------------------------
-echo "[3/5] Seeding Redis test data..."
+# -------------------------
+# Seed Redis with test data
+# -------------------------
+echo "Seeding Redis test data..."
 python3 /workspace/tests/redfish-api/data/redis_seed.py
 echo "  test data seeded"
 
-# -----------------------------------------------------------------------
-# 4. sonic-dbus-bridge
-# -----------------------------------------------------------------------
-echo "[4/5] Starting sonic-dbus-bridge..."
+# ------------------
+# sonic-dbus-bridge
+# -----------------
+echo "Starting sonic-dbus-bridge..."
 export PLATFORM="arm64-test-platform-r0"
 sonic-dbus-bridge -c "$BRIDGE_CONFIG" &> "$LOG_DIR/bridge.log" &
 BRIDGE_PID=$!
@@ -94,10 +94,10 @@ if ! dbus-send --system --dest=org.freedesktop.DBus --print-reply \
 fi
 echo "  sonic-dbus-bridge started (pid=$BRIDGE_PID)"
 
-# -----------------------------------------------------------------------
-# 5. bmcweb
-# -----------------------------------------------------------------------
-echo "[5/5] Starting bmcweb..."
+# -------
+# bmcweb
+# -------
+echo "Starting bmcweb..."
 # bmcweb expects systemd socket activation (FileDescriptorName=bmcweb_443_https_auth
 # in /usr/lib/systemd/system/bmcweb.socket). Without the LISTEN_FDS handoff it
 # starts but never binds 443. systemd-socket-activate provides the FD outside

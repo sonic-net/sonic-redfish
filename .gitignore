@@ -83,7 +83,6 @@ core
 .dockerignore
 
 # Logs
-/test_report.log
 *.log
 logs/
 
