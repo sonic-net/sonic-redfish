@@ -1,13 +1,14 @@
 ///////////////////////////////////////
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Nexthop AI
-// Copyright (C) 2024 SONiC Project
+// Copyright (C) 2026 SONiC Project
 // Author: Nexthop AI
 // Author: SONiC Project
 // License file: sonic-redfish/LICENSE
 ///////////////////////////////////////
 
 #include "bridge_app.hpp"
+#include "rack_manager_receiver.hpp"
 #include "inventory_model.hpp"
 #include "logger.hpp"
 #include "config.h"
@@ -82,6 +83,27 @@ bool BridgeApp::initialize()
 
     // Create state objects
     createStateObjects();
+
+    // Initialize rack manager receiver (alert/telemetry via D-Bus -> Redis)
+    LOG_INFO("Initializing Rack Manager Receiver...");
+    rackManagerReceiver_ = std::make_unique<RackManagerReceiver>(
+        *inventoryServer_,
+        configMgr_->getStateDbHost(),
+        configMgr_->getStateDbPort());
+    if (rackManagerReceiver_->initialize())
+    {
+        LOG_INFO("Rack Manager Receiver initialized");
+        if (objectMapper_)
+        {
+            objectMapper_->registerObject(
+                RACK_MANAGER_OBJ_PATH,
+                {RACK_MANAGER_IFACE});
+        }
+    }
+    else
+    {
+        LOG_WARNING("Rack Manager Receiver failed to initialize");
+    }
 
     // Initialize user management (non-fatal if it fails)
     initializeUserManager();
