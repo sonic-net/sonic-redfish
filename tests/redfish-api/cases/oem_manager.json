@@ -1,0 +1,132 @@
+[
+  {
+    "name": "test_managers_collection_returns_200",
+    "description": "Validates the Managers collection is reachable",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/",
+    "expected_status": 200
+  },
+  {
+    "name": "test_bmc_manager_returns_200",
+    "description": "Validates the BMC Manager resource is reachable",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc",
+    "expected_status": 200
+  },
+  {
+    "name": "test_bmc_manager_exposes_sonic_oem_block",
+    "description": "Validates the BMC Manager response carries the SONiC OEM RackManager sub-resource",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "exists",
+        "path": "Oem.SONiC.RackManager"
+      }
+    ]
+  },
+  {
+    "name": "test_sonic_oem_identity_fields",
+    "description": "Validates the SONiC OEM RackManager identity payload",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc",
+    "expected_status": 200,
+    "expected_response": {
+      "Oem": {
+        "SONiC": {
+          "RackManager": {
+            "@odata.type": "#SonicManager.v1_0_0.RackManager",
+            "@odata.id": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager",
+            "Id": "RackManager",
+            "Name": "SONiC Rack Manager Interface"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "test_sonic_oem_advertises_submit_alert_action",
+    "description": "Validates the SubmitAlert action target is advertised under the SONiC OEM block",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc",
+    "expected_status": 200,
+    "expected_response": {
+      "Oem": {
+        "SONiC": {
+          "RackManager": {
+            "Actions": {
+              "#SONiC.SubmitAlert": {
+                "target": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "test_sonic_oem_advertises_submit_telemetry_action",
+    "description": "Validates the SubmitTelemetry action target is advertised under the SONiC OEM block",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc",
+    "expected_status": 200,
+    "expected_response": {
+      "Oem": {
+        "SONiC": {
+          "RackManager": {
+            "Actions": {
+              "#SONiC.SubmitTelemetry": {
+                "target": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "test_submit_alert_unauthenticated_returns_401",
+    "description": "Validates SubmitAlert rejects unauthenticated POSTs",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert/",
+    "auth": false,
+    "expected_status": 401
+  },
+  {
+    "name": "test_submit_telemetry_unauthenticated_returns_401",
+    "description": "Validates SubmitTelemetry rejects unauthenticated POSTs",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry/",
+    "auth": false,
+    "expected_status": 401
+  },
+  {
+    "name": "test_submit_alert_empty_body_returns_400",
+    "description": "Validates SubmitAlert rejects POSTs with an empty body as malformed JSON",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert/",
+    "expected_status": 400
+  },
+  {
+    "name": "test_submit_telemetry_empty_body_returns_400",
+    "description": "Validates SubmitTelemetry rejects POSTs with an empty body as malformed JSON",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry/",
+    "expected_status": 400
+  },
+  {
+    "name": "test_submit_alert_get_method_not_allowed",
+    "description": "Validates the SubmitAlert action target is POST-only",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert/",
+    "expected_status": 405
+  },
+  {
+    "name": "test_submit_telemetry_get_method_not_allowed",
+    "description": "Validates the SubmitTelemetry action target is POST-only",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry/",
+    "expected_status": 405
+  }
+]

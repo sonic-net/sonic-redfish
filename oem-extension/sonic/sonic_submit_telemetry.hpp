@@ -109,7 +109,7 @@ inline void requestRoutesSonicSubmitTelemetry(App& app)
 {
     BMCWEB_ROUTE(
         app,
-        "/redfish/v1/Managers/<str>/Oem/SONiC/RackManagerInterface/Actions/SONiC.SubmitTelemetry/")
+        "/redfish/v1/Managers/<str>/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry/")
         .privileges(redfish::privileges::postManager)
         .methods(boost::beast::http::verb::post)(
             std::bind_front(handleSonicSubmitTelemetry, std::ref(app)));

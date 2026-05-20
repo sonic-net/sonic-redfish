@@ -96,28 +96,28 @@ inline const std::vector<FieldMapping>& getAlertMappings()
 {
     static const std::vector<FieldMapping> mappings = {
         // --- FlowRateDeviation ---
-        {"redfish_alert_data.FlowRateDeviation.InletTemperature", "RSCM_ALERT|FlowRateDeviation", "inlet_temperature", FieldType::Number},
-        {"redfish_alert_data.FlowRateDeviation.FlowRate",         "RSCM_ALERT|FlowRateDeviation", "flow_rate",         FieldType::Number},
-        {"redfish_alert_data.FlowRateDeviation.Severity",         "RSCM_ALERT|FlowRateDeviation", "severity",          FieldType::String},
-        {"redfish_alert_data.FlowRateDeviation.RscmPosition",     "RSCM_ALERT|FlowRateDeviation", "rscm_position",     FieldType::Integer},
+        {"Alerts.FlowRateDeviation.InletTemperature", "RSCM_ALERT|FlowRateDeviation", "inlet_temperature", FieldType::Number},
+        {"Alerts.FlowRateDeviation.FlowRate",         "RSCM_ALERT|FlowRateDeviation", "flow_rate",         FieldType::Number},
+        {"Alerts.FlowRateDeviation.Severity",         "RSCM_ALERT|FlowRateDeviation", "severity",          FieldType::String},
+        {"Alerts.FlowRateDeviation.RscmPosition",     "RSCM_ALERT|FlowRateDeviation", "rscm_position",     FieldType::Integer},
 
         // --- LiquidPressureDeviation ---
-        {"redfish_alert_data.LiquidPressureDeviation.LiquidPressure", "RSCM_ALERT|LiquidPressureDeviation", "liquid_pressure", FieldType::Number},
-        {"redfish_alert_data.LiquidPressureDeviation.Severity",       "RSCM_ALERT|LiquidPressureDeviation", "severity",        FieldType::String},
-        {"redfish_alert_data.LiquidPressureDeviation.RscmPosition",   "RSCM_ALERT|LiquidPressureDeviation", "rscm_position",   FieldType::Integer},
+        {"Alerts.LiquidPressureDeviation.LiquidPressure", "RSCM_ALERT|LiquidPressureDeviation", "liquid_pressure", FieldType::Number},
+        {"Alerts.LiquidPressureDeviation.Severity",       "RSCM_ALERT|LiquidPressureDeviation", "severity",        FieldType::String},
+        {"Alerts.LiquidPressureDeviation.RscmPosition",   "RSCM_ALERT|LiquidPressureDeviation", "rscm_position",   FieldType::Integer},
 
         // --- InletTemperatureDeviation ---
-        {"redfish_alert_data.InletTemperatureDeviation.InletTemperature", "RSCM_ALERT|InletTemperatureDeviation", "inlet_temperature", FieldType::Number},
-        {"redfish_alert_data.InletTemperatureDeviation.Severity",         "RSCM_ALERT|InletTemperatureDeviation", "severity",          FieldType::String},
-        {"redfish_alert_data.InletTemperatureDeviation.RscmPosition",     "RSCM_ALERT|InletTemperatureDeviation", "rscm_position",     FieldType::Integer},
+        {"Alerts.InletTemperatureDeviation.InletTemperature", "RSCM_ALERT|InletTemperatureDeviation", "inlet_temperature", FieldType::Number},
+        {"Alerts.InletTemperatureDeviation.Severity",         "RSCM_ALERT|InletTemperatureDeviation", "severity",          FieldType::String},
+        {"Alerts.InletTemperatureDeviation.RscmPosition",     "RSCM_ALERT|InletTemperatureDeviation", "rscm_position",     FieldType::Integer},
 
         // --- LeakDetected ---
-        {"redfish_alert_data.LeakDetected.Severity",     "RSCM_ALERT|LeakDetected", "severity",      FieldType::String},
-        {"redfish_alert_data.LeakDetected.RscmPosition", "RSCM_ALERT|LeakDetected", "rscm_position", FieldType::Integer},
+        {"Alerts.LeakDetected.Severity",     "RSCM_ALERT|LeakDetected", "severity",      FieldType::String},
+        {"Alerts.LeakDetected.RscmPosition", "RSCM_ALERT|LeakDetected", "rscm_position", FieldType::Integer},
 
         // --- LeakRopeBreak ---
-        {"redfish_alert_data.LeakRopeBreak.Severity",     "RSCM_ALERT|LeakRopeBreak", "severity",      FieldType::String},
-        {"redfish_alert_data.LeakRopeBreak.RscmPosition", "RSCM_ALERT|LeakRopeBreak", "rscm_position", FieldType::Integer},
+        {"Alerts.LeakRopeBreak.Severity",     "RSCM_ALERT|LeakRopeBreak", "severity",      FieldType::String},
+        {"Alerts.LeakRopeBreak.RscmPosition", "RSCM_ALERT|LeakRopeBreak", "rscm_position", FieldType::Integer},
     };
     return mappings;
 }

@@ -13,9 +13,9 @@ into the bmcweb build and route registration:
  * schema/oem/meson.build: add sonic subdirectory for OEM schema installation
 
 Routes added:
- - GET  /redfish/v1/Managers/Bmc/Oem/SONiC/RackManagerInterface (OEM sub-route)
- - POST /redfish/v1/Managers/Bmc/Oem/SONiC/RackManagerInterface/Actions/SONiC.SubmitAlert
- - POST /redfish/v1/Managers/Bmc/Oem/SONiC/RackManagerInterface/Actions/SONiC.SubmitTelemetry
+ - GET  /redfish/v1/Managers/Bmc/Oem/SONiC/RackManager (OEM sub-route)
+ - POST /redfish/v1/Managers/Bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert
+ - POST /redfish/v1/Managers/Bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry
 ---
  redfish-core/schema/oem/meson.build | 1 +
  redfish-core/src/redfish.cpp        | 3 +++

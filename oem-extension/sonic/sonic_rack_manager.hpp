@@ -15,9 +15,9 @@ namespace redfish
 {
 
 /**
- * @brief Handle GET /redfish/v1/Managers/<str>/Oem/SONiC/RackManagerInterface
+ * @brief Handle GET /redfish/v1/Managers/<str>/Oem/SONiC/RackManager
  *
- * Returns the RackManagerInterface OEM resource, which describes
+ * Returns the SONiC RackManager OEM sub-resource, which describes
  * the available actions that a rack manager can invoke on this BMC.
  */
 inline void handleGetSonicRackManager(
@@ -32,11 +32,11 @@ inline void handleGetSonicRackManager(
     }
 
     nlohmann::json& json = asyncResp->res.jsonValue;
-    json["@odata.type"] = "#SonicManager.v1_0_0.RackManagerInterface";
+    json["@odata.type"] = "#SonicManager.v1_0_0.RackManager";
     json["@odata.id"] =
         "/redfish/v1/Managers/" + std::string(BMCWEB_REDFISH_MANAGER_URI_NAME) +
-        "/Oem/SONiC/RackManagerInterface";
-    json["Id"] = "RackManagerInterface";
+        "/Oem/SONiC/RackManager";
+    json["Id"] = "RackManager";
     json["Name"] = "SONiC Rack Manager Interface";
     json["Description"] =
         "OEM interface for rack manager to communicate with switch BMC";
@@ -45,17 +45,17 @@ inline void handleGetSonicRackManager(
     nlohmann::json& actions = json["Actions"];
     actions["#SONiC.SubmitAlert"]["target"] =
         "/redfish/v1/Managers/" + std::string(BMCWEB_REDFISH_MANAGER_URI_NAME) +
-        "/Oem/SONiC/RackManagerInterface/Actions/SONiC.SubmitAlert";
+        "/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert";
 
     actions["#SONiC.SubmitTelemetry"]["target"] =
         "/redfish/v1/Managers/" + std::string(BMCWEB_REDFISH_MANAGER_URI_NAME) +
-        "/Oem/SONiC/RackManagerInterface/Actions/SONiC.SubmitTelemetry";
+        "/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry";
 }
 
 inline void requestRoutesSonicRackManager(RedfishService& service)
 {
     REDFISH_SUB_ROUTE<
-        "/redfish/v1/Managers/<str>/#/Oem/SONiC/RackManagerInterface">(
+        "/redfish/v1/Managers/<str>/#/Oem/SONiC/RackManager">(
         service, HttpVerb::Get)(handleGetSonicRackManager);
 }
 

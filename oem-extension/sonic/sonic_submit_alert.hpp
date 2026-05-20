@@ -35,11 +35,11 @@ constexpr const char* alertDbusInterface = "com.sonic.RackManager";
  *
  * Request body example:
  *   {
- *     "redfish_alert_data": {
+ *     "Alerts": {
  *       "FlowRateDeviation": {
  *         "InletTemperature": 18,
  *         "FlowRate": 58,
- *         "Severity": "Minor",
+ *         "Severity": "Warning",
  *         "RscmPosition": 1
  *       },
  *       ...
@@ -72,9 +72,9 @@ inline void handleSonicSubmitAlert(
     }
 
     // Require the top-level key
-    if (!reqJson.contains("redfish_alert_data"))
+    if (!reqJson.contains("Alerts"))
     {
-        messages::propertyMissing(asyncResp->res, "redfish_alert_data");
+        messages::propertyMissing(asyncResp->res, "Alerts");
         return;
     }
 
@@ -108,7 +108,7 @@ inline void requestRoutesSonicSubmitAlert(App& app)
 {
     BMCWEB_ROUTE(
         app,
-        "/redfish/v1/Managers/<str>/Oem/SONiC/RackManagerInterface/Actions/SONiC.SubmitAlert/")
+        "/redfish/v1/Managers/<str>/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert/")
         .privileges(redfish::privileges::postManager)
         .methods(boost::beast::http::verb::post)(
             std::bind_front(handleSonicSubmitAlert, std::ref(app)));

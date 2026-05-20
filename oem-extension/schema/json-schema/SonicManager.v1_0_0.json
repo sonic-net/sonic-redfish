@@ -1,12 +1,50 @@
 {
     "$id": "https://github.com/sonic-net/sonic-redfish/tree/master/oem-extension/schema/json-schema/SonicManager.v1_0_0.json",
+    "$ref": "#/definitions/Manager",
     "$schema": "http://redfish.dmtf.org/schemas/v1/redfish-schema-v1.json",
-    "copyright": "Copyright 2026 SONiC Contributors.",
+    "copyright": "Copyright 2026 SONiC Contributors and Nexthop AI.",
     "definitions": {
-        "RackManagerInterface": {
+        "Manager": {
             "additionalProperties": false,
-            "description": "OEM interface for rack manager to communicate with switch BMC.",
-            "longDescription": "This resource provides an OEM interface on the SONiC switch BMC that allows the rack manager to post alerts and telemetry data.",
+            "anyOf": [
+                {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/OemObject"
+                }
+            ],
+            "description": "SONiC OEM extension for the Redfish Manager resource.",
+            "longDescription": "This object extends the standard Redfish Manager with SONiC-specific properties.  It is intended to appear as the value of the Oem.SONiC property on a Manager resource.",
+            "patternProperties": {
+                "^([a-zA-Z_][a-zA-Z0-9_]*)?@(odata|Redfish|Message)\\.[a-zA-Z_][a-zA-Z0-9_]*$": {
+                    "description": "This property shall specify a valid odata or Redfish property.",
+                    "type": [
+                        "array",
+                        "boolean",
+                        "integer",
+                        "number",
+                        "null",
+                        "object",
+                        "string"
+                    ]
+                }
+            },
+            "properties": {
+                "RackManager": {
+                    "$ref": "#/definitions/RackManager",
+                    "description": "SONiC rack-manager communication interface.",
+                    "longDescription": "Sub-resource that advertises the actions a rack manager can invoke on the switch BMC."
+                }
+            },
+            "type": "object"
+        },
+        "RackManager": {
+            "additionalProperties": false,
+            "anyOf": [
+                {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/OemObject"
+                }
+            ],
+            "description": "OEM sub-resource through which a rack manager communicates with the switch BMC.",
+            "longDescription": "This resource exposes the SubmitAlert and SubmitTelemetry actions used by a rack manager to push alert and telemetry data to the SONiC switch BMC.",
             "patternProperties": {
                 "^([a-zA-Z_][a-zA-Z0-9_]*)?@(odata|Redfish|Message)\\.[a-zA-Z_][a-zA-Z0-9_]*$": {
                     "description": "This property shall specify a valid odata or Redfish property.",
@@ -23,14 +61,39 @@
             },
             "properties": {
                 "Actions": {
-                    "$ref": "#/definitions/RackManagerInterfaceActions"
+                    "$ref": "#/definitions/RackManagerActions",
+                    "description": "The available actions for this resource.",
+                    "longDescription": "This property shall contain the available actions for this resource."
+                },
+                "Description": {
+                    "anyOf": [
+                        {
+                            "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/Description"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "readonly": true
+                },
+                "Id": {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/Id",
+                    "readonly": true
+                },
+                "Name": {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/Name",
+                    "readonly": true
                 }
             },
+            "required": [
+                "Actions"
+            ],
             "type": "object"
         },
-        "RackManagerInterfaceActions": {
+        "RackManagerActions": {
             "additionalProperties": false,
-            "description": "Available actions for the RackManagerInterface resource.",
+            "description": "The available actions for the RackManager resource.",
+            "longDescription": "This type shall contain the available actions for the RackManager resource.",
             "properties": {
                 "#SONiC.SubmitAlert": {
                     "$ref": "#/definitions/SubmitAlert"
@@ -43,8 +106,19 @@
         },
         "SubmitAlert": {
             "additionalProperties": false,
-            "description": "Rack manager posts alert data to the switch BMC.",
-            "longDescription": "This action allows a rack manager to submit structured alert data to the switch BMC.  The body contains a redfish_alert_data object whose keys are alert type names (e.g. FlowRateDeviation, LeakDetected).  Each alert carries fields appropriate to its type plus a Severity and RscmPosition.",
+            "description": "Submit structured alert data from a rack manager to the switch BMC.",
+            "longDescription": "This action shall allow a rack manager to submit structured alert data to the switch BMC.  The request body contains an Alerts object whose keys are alert type names (for example, FlowRateDeviation, LeakDetected); each alert entry carries Severity, RscmPosition, and additional type-specific fields.",
+            "parameters": {
+                "Alerts": {
+                    "additionalProperties": {
+                        "$ref": "#/definitions/AlertEntry"
+                    },
+                    "description": "Container for alert entries keyed by alert type.",
+                    "longDescription": "This parameter shall contain a map of alert entries keyed by alert type name.  Each value shall conform to the AlertEntry schema.",
+                    "requiredParameter": true,
+                    "type": "object"
+                }
+            },
             "properties": {
                 "target": {
                     "description": "Link to invoke action.",
@@ -56,48 +130,39 @@
                     "type": "string"
                 }
             },
-            "type": "object"
-        },
-        "SubmitAlertRequestBody": {
-            "additionalProperties": false,
-            "description": "Request body for SONiC.SubmitAlert action.",
-            "properties": {
-                "redfish_alert_data": {
-                    "description": "Container for alert entries keyed by alert type.",
-                    "type": "object",
-                    "additionalProperties": {
-                        "$ref": "#/definitions/AlertEntry"
-                    }
-                }
-            },
-            "required": [
-                "redfish_alert_data"
-            ],
             "type": "object"
         },
         "AlertEntry": {
+            "additionalProperties": true,
             "description": "A single alert entry.  Fields vary by alert type; Severity and RscmPosition are always present.",
-            "type": "object",
+            "longDescription": "This object shall describe a single alert reported by the rack manager.  Implementations may include additional alert-type-specific properties; Severity and RscmPosition shall always be present.",
             "properties": {
-                "Severity": {
-                    "description": "Severity of the alert condition.",
-                    "type": "string"
-                },
                 "RscmPosition": {
-                    "description": "RSCM position identifier.",
+                    "description": "RSCM position identifier of the reporting device.",
                     "type": "integer"
+                },
+                "Severity": {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/Health",
+                    "description": "Severity of the alert condition."
                 }
             },
-            "additionalProperties": true,
             "required": [
-                "Severity",
-                "RscmPosition"
-            ]
+                "RscmPosition",
+                "Severity"
+            ],
+            "type": "object"
         },
         "SubmitTelemetry": {
             "additionalProperties": false,
-            "description": "Rack manager sends periodic telemetry / alarm data to the switch BMC.",
-            "longDescription": "This action allows a rack manager to submit telemetry data.  The body contains an Alarms object with sensor status flags, deviation sub-objects, leak detection, and general parameters.",
+            "description": "Submit periodic telemetry and alarm data from a rack manager to the switch BMC.",
+            "longDescription": "This action shall allow a rack manager to submit telemetry data to the switch BMC.  The request body contains an Alarms object with sensor status flags, deviation sub-objects, leak detection, and general parameters.",
+            "parameters": {
+                "Alarms": {
+                    "$ref": "#/definitions/Alarms",
+                    "description": "Container for alarm and sensor telemetry data.",
+                    "requiredParameter": true
+                }
+            },
             "properties": {
                 "target": {
                     "description": "Link to invoke action.",
@@ -111,97 +176,136 @@
             },
             "type": "object"
         },
-        "SubmitTelemetryRequestBody": {
-            "additionalProperties": false,
-            "description": "Request body for SONiC.SubmitTelemetry action.",
+        "Alarms": {
+            "additionalProperties": true,
+            "description": "Container for alarm and sensor telemetry data submitted by a rack manager.",
+            "longDescription": "This object shall contain alarm and sensor telemetry data.  Implementations may include additional properties beyond those listed here.",
             "properties": {
-                "Alarms": {
-                    "description": "Container for alarm and sensor telemetry data.",
-                    "type": "object",
-                    "additionalProperties": true,
-                    "properties": {
-                        "EnergyValveActive": {
-                            "description": "Whether the energy valve is active.",
-                            "type": "boolean"
-                        },
-                        "EnergyValvePresent": {
-                            "description": "Whether the energy valve is present.",
-                            "type": "boolean"
-                        },
-                        "FlowrateSensorActive": {
-                            "description": "Whether the flow-rate sensor is active.",
-                            "type": "boolean"
-                        },
-                        "PressureSensorActive": {
-                            "description": "Whether the pressure sensor is active.",
-                            "type": "boolean"
-                        },
-                        "TemperatureSensorActive": {
-                            "description": "Whether the temperature sensor is active.",
-                            "type": "boolean"
-                        },
-                        "InletTempDeviation": {
-                            "description": "Inlet temperature deviation data.",
-                            "type": "object",
-                            "properties": {
-                                "InletTemperature": { "type": "number" },
-                                "Severity": { "type": "string" }
-                            }
-                        },
-                        "FlowRateDeviation": {
-                            "description": "Flow-rate deviation data.",
-                            "type": "object",
-                            "properties": {
-                                "FlowRate": { "type": "number" },
-                                "Severity": { "type": "string" }
-                            }
-                        },
-                        "LiquidPressureDeviation": {
-                            "description": "Liquid pressure deviation data.",
-                            "type": "object",
-                            "properties": {
-                                "LiquidPressure": { "type": "number" },
-                                "Severity": { "type": "string" }
-                            }
-                        },
-                        "LeakDetected": {
-                            "description": "Leak detection data.",
-                            "type": "object",
-                            "properties": {
-                                "LeakDetected": { "type": "boolean" },
-                                "LeakRopeBreak": { "type": "boolean" },
-                                "Severity": { "type": "string" }
-                            }
-                        },
-                        "ThresholdConfigVersion": {
-                            "description": "Threshold configuration version string.",
-                            "type": "string"
-                        },
-                        "GlycolConcentration": {
-                            "description": "Glycol concentration value.",
-                            "type": "number"
-                        },
-                        "ErrorState": {
-                            "description": "Error state code.",
-                            "type": "string"
-                        },
-                        "RscmPosition": {
-                            "description": "RSCM position identifier.",
-                            "type": "integer"
-                        },
-                        "ConfigFileCorrupted": {
-                            "description": "Whether the configuration file is corrupted.",
-                            "type": "boolean"
-                        }
-                    }
+                "ConfigFileCorrupted": {
+                    "description": "Whether the configuration file is corrupted.",
+                    "type": "boolean"
+                },
+                "EnergyValveActive": {
+                    "description": "Whether the energy valve is active.",
+                    "type": "boolean"
+                },
+                "EnergyValvePresent": {
+                    "description": "Whether the energy valve is present.",
+                    "type": "boolean"
+                },
+                "ErrorState": {
+                    "description": "Error state code.",
+                    "type": "string"
+                },
+                "FlowRateDeviation": {
+                    "$ref": "#/definitions/FlowRateDeviation",
+                    "description": "Flow-rate deviation data."
+                },
+                "FlowrateSensorActive": {
+                    "description": "Whether the flow-rate sensor is active.",
+                    "type": "boolean"
+                },
+                "GlycolConcentration": {
+                    "description": "Glycol concentration value.",
+                    "type": "number"
+                },
+                "InletTempDeviation": {
+                    "$ref": "#/definitions/InletTempDeviation",
+                    "description": "Inlet temperature deviation data."
+                },
+                "LeakDetected": {
+                    "$ref": "#/definitions/LeakDetected",
+                    "description": "Leak detection data."
+                },
+                "LiquidPressureDeviation": {
+                    "$ref": "#/definitions/LiquidPressureDeviation",
+                    "description": "Liquid pressure deviation data."
+                },
+                "PressureSensorActive": {
+                    "description": "Whether the pressure sensor is active.",
+                    "type": "boolean"
+                },
+                "RscmPosition": {
+                    "description": "RSCM position identifier of the reporting device.",
+                    "type": "integer"
+                },
+                "TemperatureSensorActive": {
+                    "description": "Whether the temperature sensor is active.",
+                    "type": "boolean"
+                },
+                "ThresholdConfigVersion": {
+                    "description": "Threshold configuration version string.",
+                    "type": "string"
                 }
             },
-            "required": [
-                "Alarms"
-            ],
+            "type": "object"
+        },
+        "InletTempDeviation": {
+            "additionalProperties": false,
+            "description": "Inlet temperature deviation sub-object.",
+            "properties": {
+                "InletTemperature": {
+                    "description": "Measured inlet temperature.",
+                    "type": "number"
+                },
+                "Severity": {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/Health",
+                    "description": "Severity of the deviation condition."
+                }
+            },
+            "type": "object"
+        },
+        "FlowRateDeviation": {
+            "additionalProperties": false,
+            "description": "Flow-rate deviation sub-object.",
+            "properties": {
+                "FlowRate": {
+                    "description": "Measured coolant flow rate.",
+                    "type": "number"
+                },
+                "Severity": {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/Health",
+                    "description": "Severity of the deviation condition."
+                }
+            },
+            "type": "object"
+        },
+        "LiquidPressureDeviation": {
+            "additionalProperties": false,
+            "description": "Liquid pressure deviation sub-object.",
+            "properties": {
+                "LiquidPressure": {
+                    "description": "Measured liquid pressure.",
+                    "type": "number"
+                },
+                "Severity": {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/Health",
+                    "description": "Severity of the deviation condition."
+                }
+            },
+            "type": "object"
+        },
+        "LeakDetected": {
+            "additionalProperties": false,
+            "description": "Leak-detection sub-object.",
+            "properties": {
+                "LeakDetected": {
+                    "description": "Whether a leak has been detected.",
+                    "type": "boolean"
+                },
+                "LeakRopeBreak": {
+                    "description": "Whether the leak-detection rope is broken.",
+                    "type": "boolean"
+                },
+                "Severity": {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/Health",
+                    "description": "Severity of the leak condition."
+                }
+            },
             "type": "object"
         }
     },
     "owningEntity": "SONiC",
-    "title": "#SonicManager.v1_0_0"
+    "release": "1.0",
+    "title": "#SonicManager.v1_0_0.Manager"
 }
