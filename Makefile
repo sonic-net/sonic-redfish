@@ -467,9 +467,12 @@ endif
 # Unit Tests (C++ / gtest)
 # ========================================
 # Dumb-and-direct: each tests/unit-tests/<foo>_test.cpp is compiled together
-# with sonic-dbus-bridge/src/<foo>.cpp and linked against gtest. Runs inside
-# the builder container -- no services, no privileged mode, no new image.
-# If libgtest-dev isn't present in the builder image, it's installed on demand.
+# with sonic-dbus-bridge/src/<foo>.cpp (when present) and linked against gtest.
+# Header-only test targets (no matching src/<foo>.cpp) are compiled standalone
+# so they can exercise pure inline / template / declarative-table code.
+# Runs inside the builder container -- no services, no privileged mode, no
+# new image. If libgtest-dev isn't present in the builder image, it's
+# installed on demand.
 
 UNIT_TEST_DIR := $(REPO_ROOT)/tests/unit-tests
 
@@ -494,12 +497,16 @@ unit-test:
 			for t in tests/unit-tests/*_test.cpp; do \
 				base=\$$(basename \$$t _test.cpp); \
 				src=sonic-dbus-bridge/src/\$$base.cpp; \
-				if [ ! -f \$$src ]; then continue; fi; \
+				if [ -f \$$src ]; then \
+					extra_src=\$$src; \
+				else \
+					extra_src=; \
+				fi; \
 				g++ -std=c++20 -Wall -Wextra -g -O0 -pthread \
 					-I sonic-dbus-bridge/include \
 					-I /usr/src/googletest/googletest \
 					-I /usr/src/googletest/googletest/include \
-					\$$t \$$src \
+					\$$t \$$extra_src \
 					/usr/src/googletest/googletest/src/gtest-all.cc \
 					/usr/src/googletest/googletest/src/gtest_main.cc \
 					-o /tmp/ut/\$$base || { failed=1; continue; }; \
