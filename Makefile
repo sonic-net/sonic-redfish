@@ -33,6 +33,7 @@ BUILD_DIR := $(REPO_ROOT)/build
 TARGET_DIR := $(REPO_ROOT)/$(SONIC_REDFISH_TARGET)
 SERIES_FILE := $(PATCHES_DIR)/series
 DEBIAN_DIR := $(BMCWEB_DIR)/debian
+OEM_EXT_DIR := $(REPO_ROOT)/oem-extension
 
 # Build artifacts
 BMCWEB_BINARY := $(BMCWEB_DIR)/build/bmcweb
@@ -46,7 +47,7 @@ DOCKERFILE_BUILD := $(BUILD_DIR)/Dockerfile.build
 MAIN_TARGET := $(BMCWEB_BINARY)
 DERIVED_TARGETS := $(BRIDGE_BINARY)
 
-.PHONY: all build clean reset setup-bmcweb copy-patches apply-patches build-bmcweb build-bridge build-bmcweb-native build-bridge-native build-in-docker test unit-test help
+.PHONY: all build clean reset setup-bmcweb copy-oem-extension copy-patches apply-patches build-bmcweb build-bridge build-bmcweb-native build-bridge-native build-in-docker test unit-test help
 
 # Recipes in this Makefile share Docker images and the target/ directory, so
 # the top-level prereq chain (build → unit-test → test) must run sequentially.
@@ -136,7 +137,7 @@ build: $(DOCKERFILE_BUILD)
 
 # Build inside Docker (called from Docker container)
 # Note: sdbusplus is pre-installed in the Docker image
-build-in-docker: setup-bmcweb apply-patches build-bridge-native build-bmcweb-native
+build-in-docker: setup-bmcweb copy-oem-extension apply-patches build-bridge-native build-bmcweb-native
 	@echo "  Build inside Docker completed"
 
 # Setup bmcweb source
@@ -161,14 +162,34 @@ setup-bmcweb:
 	fi
 	@echo "  bmcweb ready"
 
-# Copy patches to debian/ directory 
+# Copy OEM extension files into bmcweb source tree before patching
+copy-oem-extension: setup-bmcweb
+	@echo "Copying SONiC OEM extension into bmcweb..."
+	@mkdir -p $(BMCWEB_DIR)/redfish-core/lib/sonic
+	@mkdir -p $(BMCWEB_DIR)/redfish-core/schema/oem/sonic/json-schema
+	@cp $(OEM_EXT_DIR)/sonic/*.hpp $(BMCWEB_DIR)/redfish-core/lib/sonic/
+	@cp $(OEM_EXT_DIR)/schema/json-schema/*.json $(BMCWEB_DIR)/redfish-core/schema/oem/sonic/json-schema/
+	@cp $(OEM_EXT_DIR)/schema/meson.build $(BMCWEB_DIR)/redfish-core/schema/oem/sonic/
+	@echo "  OEM extension files copied"
+
+	@# Ensure stdexec.wrap exists in bmcweb subprojects.
+	@# sdbusplus depends on stdexec but bmcweb does not ship a top-level wrap
+	@# for it. Without this, meson cannot resolve the nested subproject dependency
+	@# when building from a clean tree.
+	@if [ ! -f "$(BMCWEB_DIR)/subprojects/stdexec.wrap" ]; then \
+		echo "  Adding missing stdexec.wrap to bmcweb subprojects..."; \
+		printf '[wrap-git]\nurl = https://github.com/NVIDIA/stdexec.git\nrevision = main\ndepth = 1\n\n[provide]\nstdexec = stdexec_dep\n' \
+			> $(BMCWEB_DIR)/subprojects/stdexec.wrap; \
+	fi
+
+# Copy patches to debian/ directory
 copy-patches: $(SERIES_FILE)
 	@echo "Copying patches to debian/ directory ..."
 	@# Note: Patches will create debian/ directory, so we only copy series file after patches are applied
 	@echo "  Patches will be applied from $(PATCHES_DIR)"
 
 # Apply patches using series file
-apply-patches: setup-bmcweb
+apply-patches: setup-bmcweb copy-oem-extension
 	@echo "Applying patches from series file..."
 	@if [ ! -d "$(BMCWEB_DIR)" ]; then \
 		echo "Error: bmcweb directory not found"; \
@@ -195,8 +216,8 @@ apply-patches: setup-bmcweb
 	fi
 
 # Build bmcweb Debian package
-# Dependencies: clean → setup-bmcweb → apply-patches → build-bmcweb
-build-bmcweb: clean setup-bmcweb apply-patches
+# Dependencies: clean → setup-bmcweb → copy-oem-extension → apply-patches → build-bmcweb
+build-bmcweb: clean setup-bmcweb copy-oem-extension apply-patches
 	@echo "========================================="
 	@echo "Building bmcweb Debian package"
 	@echo "========================================="
@@ -283,7 +304,7 @@ build-bridge: clean
 	@ls -lh $(TARGET_DIR)/sonic-dbus-bridge* 2>/dev/null || echo "  No artifacts found"
 
 # Build bmcweb natively (inside Docker container, no nested Docker)
-build-bmcweb-native:
+build-bmcweb-native: setup-bmcweb copy-oem-extension apply-patches
 	@echo "========================================="
 	@echo "Building bmcweb Debian package (native)"
 	@echo "========================================="
@@ -346,7 +367,7 @@ BMCWEB = bmcweb_$(SONIC_REDFISH_VERSION)_$(CONFIGURED_ARCH).deb
 BMCWEB_DBG = bmcweb-dbg_$(SONIC_REDFISH_VERSION)_$(CONFIGURED_ARCH).deb
 
 # Main bmcweb package target for sonic-buildimage
-$(addprefix $(DEST)/, $(BMCWEB)): $(DEST)/% : setup-bmcweb apply-patches
+$(addprefix $(DEST)/, $(BMCWEB)): $(DEST)/% : setup-bmcweb copy-oem-extension apply-patches
 	# Build bmcweb package using dpkg-buildpackage
 	pushd $(BMCWEB_DIR)
 
