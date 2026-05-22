@@ -1,0 +1,7 @@
+# This file describes the maintainers for sonic-redfish
+# See the SONiC project governance document for more information
+
+Name = "Chinmoy Dey"
+Email = "chinmoy@nexthop.ai"
+Github = chinmoy-nexthop
+Mailinglist = sonicproject@googlegroups.com
