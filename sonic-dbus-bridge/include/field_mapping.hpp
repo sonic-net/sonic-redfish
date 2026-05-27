@@ -17,7 +17,7 @@
 // code needs to change.
 //
 // Example:
-//   JSON path  "Alarms.InletTempDeviation.InletTemperature"
+//   JSON path  "Alarms.InletTempDeviation.Value"
 //   is stored as  HSET RSCM_TELEMETRY|alarms inlet_temp_deviation_temperature <value>
 //
 
@@ -37,10 +37,18 @@ enum class FieldType
 
 struct FieldMapping
 {
-    std::string jsonPath;    // Dot-separated path in the input JSON
-    std::string redisKey;    // Redis hash key
-    std::string redisField;  // Redis hash field name
-    FieldType   type;        // Expected value type (for serialisation)
+    std::string jsonPath;     // Dot-separated path in the input JSON
+    std::string redisKey;     // Redis hash key
+    std::string redisField;   // Redis hash field name
+    FieldType   type;         // Expected value type (for serialisation)
+    // Optional fallback path tried only when the primary returns null.
+    // Used during wire-contract transitions so the bridge can accept
+    // both the new schema (e.g. Deviation.Value) and the legacy field
+    // name the rack-manager firmware still emits.  Remove the fallback
+    // entry once all producers have shipped the new payload.
+    // Defaulted so existing call sites don't need to specify "" -- GCC's
+    // -Wmissing-field-initializers ignores members with a default.
+    std::string altJsonPath = {};
 };
 
 // -----------------------------------------------------------------------
@@ -61,16 +69,21 @@ inline const std::vector<FieldMapping>& getTelemetryMappings()
         {"Alarms.TemperatureSensorActive", "RSCM_TELEMETRY|alarms", "temperature_sensor_active", FieldType::Boolean},
 
         // --- Inlet temperature deviation ---
-        {"Alarms.InletTempDeviation.InletTemperature", "RSCM_TELEMETRY|alarms", "inlet_temp_deviation_temperature", FieldType::Number},
-        {"Alarms.InletTempDeviation.Severity",         "RSCM_TELEMETRY|alarms", "inlet_temp_deviation_severity",    FieldType::String},
+        // altJsonPath accepts legacy firmware that emits .InletTemperature
+        // instead of the new .Value.  Drop the alt once firmware ships.
+        {"Alarms.InletTempDeviation.Value",    "RSCM_TELEMETRY|alarms", "inlet_temp_deviation_temperature", FieldType::Number,
+         "Alarms.InletTempDeviation.InletTemperature"},
+        {"Alarms.InletTempDeviation.Severity", "RSCM_TELEMETRY|alarms", "inlet_temp_deviation_severity",    FieldType::String, ""},
 
         // --- Flow rate deviation ---
-        {"Alarms.FlowRateDeviation.FlowRate", "RSCM_TELEMETRY|alarms", "flow_rate_deviation_flow_rate", FieldType::Number},
-        {"Alarms.FlowRateDeviation.Severity", "RSCM_TELEMETRY|alarms", "flow_rate_deviation_severity",  FieldType::String},
+        {"Alarms.FlowRateDeviation.Value",    "RSCM_TELEMETRY|alarms", "flow_rate_deviation_flow_rate", FieldType::Number,
+         "Alarms.FlowRateDeviation.FlowRate"},
+        {"Alarms.FlowRateDeviation.Severity", "RSCM_TELEMETRY|alarms", "flow_rate_deviation_severity",  FieldType::String, ""},
 
         // --- Liquid pressure deviation ---
-        {"Alarms.LiquidPressureDeviation.LiquidPressure", "RSCM_TELEMETRY|alarms", "liquid_pressure_deviation_pressure", FieldType::Number},
-        {"Alarms.LiquidPressureDeviation.Severity",       "RSCM_TELEMETRY|alarms", "liquid_pressure_deviation_severity", FieldType::String},
+        {"Alarms.LiquidPressureDeviation.Value",    "RSCM_TELEMETRY|alarms", "liquid_pressure_deviation_pressure", FieldType::Number,
+         "Alarms.LiquidPressureDeviation.LiquidPressure"},
+        {"Alarms.LiquidPressureDeviation.Severity", "RSCM_TELEMETRY|alarms", "liquid_pressure_deviation_severity", FieldType::String, ""},
 
         // --- Leak detection ---
         {"Alarms.LeakDetected.LeakDetected",  "RSCM_TELEMETRY|alarms", "leak_detected",          FieldType::Boolean},

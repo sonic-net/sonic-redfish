@@ -41,7 +41,7 @@ namespace redfish
  *       "FlowRateDeviation": {
  *         "InletTemperature": 18,
  *         "FlowRate": 58,
- *         "Severity": "Warning",
+ *         "Severity": "Major",
  *         "RscmPosition": 1
  *       },
  *       ...

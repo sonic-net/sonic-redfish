@@ -59,6 +59,15 @@ TEST(FieldMappingTables, BothTablesAreNonEmpty)
 // Entry-level invariants (apply to every row in every table)
 // ---------------------------------------------------------------------------
 
+static void checkPathSyntax(const std::string& path, const std::string& ctx,
+                            const std::string& which)
+{
+    EXPECT_EQ(path.find(' '), std::string::npos)
+        << ctx << ": " << which << " contains a space: '" << path << "'";
+    EXPECT_NE(path.front(), '.') << ctx << ": " << which << " starts with '.'";
+    EXPECT_NE(path.back(),  '.') << ctx << ": " << which << " ends with '.'";
+}
+
 static void checkEntryInvariants(const FieldMapping& m, const std::string& ctx)
 {
     EXPECT_FALSE(m.jsonPath.empty())   << ctx << ": jsonPath is empty";
@@ -66,10 +75,16 @@ static void checkEntryInvariants(const FieldMapping& m, const std::string& ctx)
     EXPECT_FALSE(m.redisField.empty()) << ctx << ": redisField is empty";
 
     // JSON paths use dot notation; spaces or leading/trailing dots are bugs.
-    EXPECT_EQ(m.jsonPath.find(' '), std::string::npos)
-        << ctx << ": jsonPath contains a space: '" << m.jsonPath << "'";
-    EXPECT_NE(m.jsonPath.front(), '.') << ctx << ": jsonPath starts with '.'";
-    EXPECT_NE(m.jsonPath.back(),  '.') << ctx << ": jsonPath ends with '.'";
+    checkPathSyntax(m.jsonPath, ctx, "jsonPath");
+
+    // altJsonPath is optional, but if present must follow the same syntax
+    // rules and must not equal the primary path (would be a copy-paste bug).
+    if (!m.altJsonPath.empty())
+    {
+        checkPathSyntax(m.altJsonPath, ctx, "altJsonPath");
+        EXPECT_NE(m.altJsonPath, m.jsonPath)
+            << ctx << ": altJsonPath equals jsonPath";
+    }
 
     EXPECT_TRUE(isValidFieldType(m.type)) << ctx << ": invalid FieldType";
 }

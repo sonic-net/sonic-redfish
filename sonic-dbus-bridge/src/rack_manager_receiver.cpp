@@ -116,6 +116,7 @@ bool RackManagerReceiver::initialize()
     iface_->register_method(
         "SubmitAlert",
         [this](const std::string& jsonStr) -> bool {
+            jobsReceived_.fetch_add(1, std::memory_order_relaxed);
             LOG_INFO("RackManagerReceiver: SubmitAlert received (%zu bytes)",
                      jsonStr.size());
             Job j{&getAlertMappings(), {}};
@@ -126,6 +127,7 @@ bool RackManagerReceiver::initialize()
             std::lock_guard<std::mutex> lk(queueMutex_);
             if (queue_.size() >= kMaxQueueDepth)
             {
+                jobsDroppedQueueFull_.fetch_add(1, std::memory_order_relaxed);
                 LOG_WARNING("RackManagerReceiver: queue full (%zu); "
                             "dropping SubmitAlert", queue_.size());
                 return false;
@@ -138,6 +140,7 @@ bool RackManagerReceiver::initialize()
     iface_->register_method(
         "SubmitTelemetry",
         [this](const std::string& jsonStr) -> bool {
+            jobsReceived_.fetch_add(1, std::memory_order_relaxed);
             LOG_INFO("RackManagerReceiver: SubmitTelemetry received (%zu bytes)",
                      jsonStr.size());
             Job j{&getTelemetryMappings(), {}};
@@ -148,6 +151,7 @@ bool RackManagerReceiver::initialize()
             std::lock_guard<std::mutex> lk(queueMutex_);
             if (queue_.size() >= kMaxQueueDepth)
             {
+                jobsDroppedQueueFull_.fetch_add(1, std::memory_order_relaxed);
                 LOG_WARNING("RackManagerReceiver: queue full (%zu); "
                             "dropping SubmitTelemetry", queue_.size());
                 return false;
@@ -248,6 +252,10 @@ bool RackManagerReceiver::buildJob(const std::string& jsonStr,
     for (const auto& m : mappings)
     {
         Json::Value val = resolveJsonPath(root, m.jsonPath);
+        if (val.isNull() && !m.altJsonPath.empty())
+        {
+            val = resolveJsonPath(root, m.altJsonPath);
+        }
         if (val.isNull()) { continue; }
         std::string strVal = valueToString(val, m.type);
         if (strVal.empty()) { continue; }
@@ -281,6 +289,7 @@ void RackManagerReceiver::drainOne(const Job& job)
 {
     if (!redisCtx_ && !connectRedis())
     {
+        jobsDroppedNoRedis_.fetch_add(1, std::memory_order_relaxed);
         LOG_WARNING("RackManagerReceiver: dropping %zu writes (no Redis)",
                     job.writes.size());
         return;
@@ -293,6 +302,7 @@ void RackManagerReceiver::drainOne(const Job& job)
                                key.c_str(), field.c_str(),
                                value.c_str()) != REDIS_OK)
         {
+            redisCommandFailures_.fetch_add(1, std::memory_order_relaxed);
             LOG_ERROR("RackManagerReceiver: redisAppendCommand failed: %s",
                       redisCtx_->errstr);
             redisFree(redisCtx_);
@@ -308,6 +318,7 @@ void RackManagerReceiver::drainOne(const Job& job)
         if (redisGetReply(redisCtx_,
                           reinterpret_cast<void**>(&reply)) != REDIS_OK)
         {
+            redisCommandFailures_.fetch_add(1, std::memory_order_relaxed);
             LOG_ERROR("RackManagerReceiver: redisGetReply failed: %s",
                       redisCtx_->errstr);
             redisFree(redisCtx_);
@@ -318,8 +329,44 @@ void RackManagerReceiver::drainOne(const Job& job)
         if (reply) { freeReplyObject(reply); }
     }
 
+    jobsPersisted_.fetch_add(1, std::memory_order_relaxed);
+    fieldsPersisted_.fetch_add(static_cast<std::uint64_t>(stored),
+                               std::memory_order_relaxed);
+
     LOG_INFO("RackManagerReceiver: persisted %d/%zu fields",
              stored, job.writes.size());
+
+    logSummaryIfDue();
+}
+
+// ---------------------------------------------------------------------------
+// Counter summary: emit a single INFO line every kSummaryEveryNJobs jobs so
+// operators get a steady heartbeat without having to grep every "persisted"
+// line.  Cheaper than exposing each counter via D-Bus and good enough for
+// the bridge's current low-rate workload.
+// ---------------------------------------------------------------------------
+void RackManagerReceiver::logSummaryIfDue()
+{
+    const std::uint64_t persisted =
+        jobsPersisted_.load(std::memory_order_relaxed);
+    if (persisted == 0 || (persisted % kSummaryEveryNJobs) != 0)
+    {
+        return;
+    }
+    LOG_INFO("RackManagerReceiver: summary "
+             "received=%lu persisted=%lu fields=%lu "
+             "dropped_queue_full=%lu dropped_no_redis=%lu redis_failures=%lu",
+             static_cast<unsigned long>(
+                 jobsReceived_.load(std::memory_order_relaxed)),
+             static_cast<unsigned long>(persisted),
+             static_cast<unsigned long>(
+                 fieldsPersisted_.load(std::memory_order_relaxed)),
+             static_cast<unsigned long>(
+                 jobsDroppedQueueFull_.load(std::memory_order_relaxed)),
+             static_cast<unsigned long>(
+                 jobsDroppedNoRedis_.load(std::memory_order_relaxed)),
+             static_cast<unsigned long>(
+                 redisCommandFailures_.load(std::memory_order_relaxed)));
 }
 
 } // namespace sonic::dbus_bridge

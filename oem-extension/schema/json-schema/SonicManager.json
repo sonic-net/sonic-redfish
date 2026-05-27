@@ -10,12 +10,8 @@
                     "$ref": "/redfish/v1/JsonSchemas/SonicManager/SonicManager.v1_0_0.json#/definitions/Manager"
                 }
             ],
-            "deletable": false,
             "description": "SONiC OEM extension for the Redfish Manager resource (unversioned alias).",
-            "insertable": false,
-            "longDescription": "Unversioned alias schema for the SONiC Manager OEM extension.  Clients should resolve this reference to the latest available versioned schema (currently v1_0_0).",
-            "updatable": false,
-            "uris": []
+            "longDescription": "Unversioned alias schema for the SONiC Manager OEM extension.  Clients should resolve this reference to the latest available versioned schema (currently v1_0_0)."
         }
     },
     "owningEntity": "SONiC",

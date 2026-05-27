@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -112,6 +113,20 @@ class RackManagerReceiver
     // wedged.  Newer submissions are dropped (with a WARN log) once
     // exceeded -- preferable to unbounded growth under back-pressure.
     static constexpr std::size_t kMaxQueueDepth = 1024;
+
+    // Counters for operator visibility.  Updated from both the dispatch
+    // thread (submission-side) and the worker thread (persistence-side);
+    // atomic to avoid a separate lock on the hot path.  Summarised by
+    // logSummaryIfDue() at a fixed cadence -- see kSummaryEveryNJobs.
+    std::atomic<std::uint64_t> jobsReceived_{0};
+    std::atomic<std::uint64_t> jobsDroppedQueueFull_{0};
+    std::atomic<std::uint64_t> jobsDroppedNoRedis_{0};
+    std::atomic<std::uint64_t> jobsPersisted_{0};
+    std::atomic<std::uint64_t> fieldsPersisted_{0};
+    std::atomic<std::uint64_t> redisCommandFailures_{0};
+    static constexpr std::uint64_t kSummaryEveryNJobs = 100;
+
+    void logSummaryIfDue();
 
     bool connectRedis();   // worker-thread-only
 
