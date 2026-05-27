@@ -20,6 +20,12 @@ SONIC_CONFIG_MAKE_JOBS ?= $(shell nproc)
 BMCWEB_HEAD_COMMIT ?= 6926d430
 BMCWEB_REPO_URL ?= https://github.com/openbmc/bmcweb.git
 
+# Pinned stdexec SHA. bmcweb's nested sdbusplus pulls stdexec via a wrap
+# that defaults to `revision = HEAD`; we override with this fixed SHA so
+# builds are reproducible even if upstream moves.
+STDEXEC_REVISION ?= fee4d651494014610a277540f209cae56011e47f
+STDEXEC_URL ?= https://github.com/NVIDIA/stdexec.git
+
 # Target directory for build artifacts
 SONIC_REDFISH_TARGET ?= target/debs/trixie
 
@@ -162,25 +168,36 @@ setup-bmcweb:
 	fi
 	@echo "  bmcweb ready"
 
-# Copy OEM extension files into bmcweb source tree before patching
+# Copy OEM extension files into bmcweb source tree before patching.
+#
+# Path coupling note (do not change one without the other):
+#   * Headers land in bmcweb/redfish-core/lib/sonic/ — this path is referenced
+#     by the patch 0003 which #include's "sonic/sonic_oem_redfish.hpp".
+#   * JSON schemas land in bmcweb/redfish-core/schema/oem/sonic/json-schema/
+#     — this path, plus the meson.build copied next to it, is referenced by
+#     the OEM schema registration logic patched into bmcweb's top-level
+#     meson build. Renaming either side requires updating the patch.
 copy-oem-extension: setup-bmcweb
 	@echo "Copying SONiC OEM extension into bmcweb..."
 	@mkdir -p $(BMCWEB_DIR)/redfish-core/lib/sonic
 	@mkdir -p $(BMCWEB_DIR)/redfish-core/schema/oem/sonic/json-schema
-	@cp $(OEM_EXT_DIR)/sonic/*.hpp $(BMCWEB_DIR)/redfish-core/lib/sonic/
-	@cp $(OEM_EXT_DIR)/schema/json-schema/*.json $(BMCWEB_DIR)/redfish-core/schema/oem/sonic/json-schema/
-	@cp $(OEM_EXT_DIR)/schema/meson.build $(BMCWEB_DIR)/redfish-core/schema/oem/sonic/
+	@# Use -u (update) so an older OEM file cannot overwrite a newer in-tree
+	@# copy that a developer may have iterated on inside bmcweb/.
+	@cp -u $(OEM_EXT_DIR)/sonic/*.hpp $(BMCWEB_DIR)/redfish-core/lib/sonic/
+	@cp -u $(OEM_EXT_DIR)/schema/json-schema/*.json $(BMCWEB_DIR)/redfish-core/schema/oem/sonic/json-schema/
+	@cp -u $(OEM_EXT_DIR)/schema/meson.build $(BMCWEB_DIR)/redfish-core/schema/oem/sonic/
 	@echo "  OEM extension files copied"
 
-	@# Ensure stdexec.wrap exists in bmcweb subprojects.
-	@# sdbusplus depends on stdexec but bmcweb does not ship a top-level wrap
-	@# for it. Without this, meson cannot resolve the nested subproject dependency
-	@# when building from a clean tree.
-	@if [ ! -f "$(BMCWEB_DIR)/subprojects/stdexec.wrap" ]; then \
-		echo "  Adding missing stdexec.wrap to bmcweb subprojects..."; \
-		printf '[wrap-git]\nurl = https://github.com/NVIDIA/stdexec.git\nrevision = main\ndepth = 1\n\n[provide]\nstdexec = stdexec_dep\n' \
-			> $(BMCWEB_DIR)/subprojects/stdexec.wrap; \
-	fi
+	@# Ensure stdexec.wrap exists in bmcweb subprojects, pinned to a fixed
+	@# SHA. sdbusplus depends on stdexec but bmcweb does not ship a
+	@# top-level wrap for it; without this, meson cannot resolve the
+	@# nested subproject dependency when building from a clean tree.
+	@# Always overwrite so a stale wrap from a previous build cannot
+	@# silently keep us on an older / drifting revision.
+	@echo "  Writing pinned stdexec.wrap (revision $(STDEXEC_REVISION))..."
+	@printf '[wrap-git]\nurl = %s\nrevision = %s\ndepth = 1\n\n[provide]\nstdexec = stdexec_dep\n' \
+		'$(STDEXEC_URL)' '$(STDEXEC_REVISION)' \
+		> $(BMCWEB_DIR)/subprojects/stdexec.wrap
 
 # Copy patches to debian/ directory
 copy-patches: $(SERIES_FILE)

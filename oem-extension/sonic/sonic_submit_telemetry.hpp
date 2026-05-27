@@ -1,5 +1,12 @@
+///////////////////////////////////////
 // SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: Copyright SONiC Contributors
+// Copyright (C) 2026 Nexthop AI
+// Copyright (C) 2026 SONiC Project
+// Author: Nexthop AI
+// Author: SONiC Project
+// License file: sonic-redfish/LICENSE
+///////////////////////////////////////
+
 #pragma once
 
 #include "app.hpp"
@@ -10,7 +17,9 @@
 #include "logging.hpp"
 #include "query.hpp"
 #include "registries/privilege_registry.hpp"
+#include "sonic/sonic_oem_constants.hpp"
 
+#include <boost/beast/http/status.hpp>
 #include <nlohmann/json.hpp>
 
 #include <memory>
@@ -18,13 +27,6 @@
 
 namespace redfish
 {
-
-// D-Bus coordinates for the sonic-dbus-bridge rack manager receiver
-constexpr const char* telemetryDbusService =
-    "xyz.openbmc_project.Inventory.Manager";
-constexpr const char* telemetryDbusObject =
-    "/xyz/openbmc_project/sonic/rack_manager";
-constexpr const char* telemetryDbusInterface = "com.sonic.RackManager";
 
 /**
  * @brief Handle POST .../Actions/SONiC.SubmitTelemetry
@@ -61,6 +63,17 @@ inline void handleSonicSubmitTelemetry(
         return;
     }
 
+    // Reject oversized payloads before parsing
+    if (req.body().size() > sonic_oem::kMaxRequestBodyBytes)
+    {
+        BMCWEB_LOG_WARNING(
+            "SONiC.SubmitTelemetry: rejected body of {} bytes (cap {})",
+            req.body().size(), sonic_oem::kMaxRequestBodyBytes);
+        asyncResp->res.result(
+            boost::beast::http::status::payload_too_large);
+        return;
+    }
+
     // Validate that the body is valid JSON
     nlohmann::json reqJson =
         nlohmann::json::parse(req.body(), nullptr, false);
@@ -82,34 +95,38 @@ inline void handleSonicSubmitTelemetry(
     BMCWEB_LOG_INFO("SONiC.SubmitTelemetry: forwarding {} bytes to D-Bus",
                     jsonStr.size());
 
-    // Forward the raw JSON to sonic-dbus-bridge
+    // Forward the raw JSON to sonic-dbus-bridge.
+    // Transport errors (bridge down, name not owned, timeout) and
+    // application errors (bridge returned false) are reported distinctly
+    // so operators can tell "service unavailable" from "bad payload".
     crow::connections::systemBus->async_method_call(
         [asyncResp](const boost::system::error_code& ec, bool success) {
             if (ec)
             {
-                BMCWEB_LOG_ERROR("SubmitTelemetry D-Bus error: {}",
+                BMCWEB_LOG_ERROR("SubmitTelemetry D-Bus transport error: {}",
                                  ec.message());
-                messages::internalError(asyncResp->res);
+                messages::serviceTemporarilyUnavailable(asyncResp->res, "1");
                 return;
             }
             if (!success)
             {
                 BMCWEB_LOG_WARNING(
-                    "SubmitTelemetry: bridge returned failure");
-                messages::internalError(asyncResp->res);
+                    "SubmitTelemetry: bridge rejected payload");
+                messages::operationFailed(asyncResp->res);
                 return;
             }
-            messages::success(asyncResp->res);
+            asyncResp->res.result(
+                boost::beast::http::status::no_content);
         },
-        telemetryDbusService, telemetryDbusObject, telemetryDbusInterface,
-        "SubmitTelemetry", jsonStr);
+        sonic_oem::rackManagerBusName, sonic_oem::rackManagerObjectPath,
+        sonic_oem::rackManagerInterface, "SubmitTelemetry", jsonStr);
 }
 
 inline void requestRoutesSonicSubmitTelemetry(App& app)
 {
     BMCWEB_ROUTE(
         app,
-        "/redfish/v1/Managers/<str>/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry/")
+        "/redfish/v1/Managers/<str>/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry")
         .privileges(redfish::privileges::postManager)
         .methods(boost::beast::http::verb::post)(
             std::bind_front(handleSonicSubmitTelemetry, std::ref(app)));

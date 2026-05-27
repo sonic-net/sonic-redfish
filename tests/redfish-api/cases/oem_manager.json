@@ -89,7 +89,7 @@
     "name": "test_submit_alert_unauthenticated_returns_401",
     "description": "Validates SubmitAlert rejects unauthenticated POSTs",
     "method": "POST",
-    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert/",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
     "auth": false,
     "expected_status": 401
   },
@@ -97,7 +97,7 @@
     "name": "test_submit_telemetry_unauthenticated_returns_401",
     "description": "Validates SubmitTelemetry rejects unauthenticated POSTs",
     "method": "POST",
-    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry/",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
     "auth": false,
     "expected_status": 401
   },
@@ -105,28 +105,54 @@
     "name": "test_submit_alert_empty_body_returns_400",
     "description": "Validates SubmitAlert rejects POSTs with an empty body as malformed JSON",
     "method": "POST",
-    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert/",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
     "expected_status": 400
   },
   {
     "name": "test_submit_telemetry_empty_body_returns_400",
     "description": "Validates SubmitTelemetry rejects POSTs with an empty body as malformed JSON",
     "method": "POST",
-    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry/",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
     "expected_status": 400
   },
   {
     "name": "test_submit_alert_get_method_not_allowed",
     "description": "Validates the SubmitAlert action target is POST-only",
     "method": "GET",
-    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert/",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
     "expected_status": 405
   },
   {
     "name": "test_submit_telemetry_get_method_not_allowed",
     "description": "Validates the SubmitTelemetry action target is POST-only",
     "method": "GET",
-    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry/",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
     "expected_status": 405
+  },
+  {
+    "name": "test_json_schemas_collection_lists_sonic_manager",
+    "description": "Validates the JsonSchemas collection exposes the SonicManager OEM schema entry",
+    "method": "GET",
+    "endpoint": "/redfish/v1/JsonSchemas",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "exists",
+        "path": "Members"
+      }
+    ]
+  },
+  {
+    "name": "test_sonic_manager_schema_resource_fetchable",
+    "description": "Validates the SonicManager OEM schema file resource is served by bmcweb",
+    "method": "GET",
+    "endpoint": "/redfish/v1/JsonSchemas/SonicManager",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "exists",
+        "path": "Location"
+      }
+    ]
   }
 ]
