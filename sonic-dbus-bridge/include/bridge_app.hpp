@@ -99,6 +99,11 @@ namespace sonic::dbus_bridge
             std::shared_ptr<sdbusplus::asio::connection> stateConn_;
             std::unique_ptr<sdbusplus::asio::object_server> stateServer_;
 
+            // Dedicated connection for the rack manager receiver so it
+            // owns its own well-known name (com.sonic.RackManager).
+            std::shared_ptr<sdbusplus::asio::connection> rackManagerConn_;
+            std::unique_ptr<sdbusplus::asio::object_server> rackManagerServer_;
+
             // Data source adapters
             std::shared_ptr<RedisAdapter> redisAdapter_;
             std::unique_ptr<PlatformJsonAdapter> platformAdapter_;

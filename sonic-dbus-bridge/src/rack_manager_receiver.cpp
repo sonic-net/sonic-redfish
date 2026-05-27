@@ -77,15 +77,26 @@ static std::string valueToString(const Json::Value& val, FieldType type)
 // ---------------------------------------------------------------------------
 RackManagerReceiver::RackManagerReceiver(
     sdbusplus::asio::object_server& server,
-    const std::string& redisHost, int redisPort)
+    const std::string& redisHost, int redisPort, int redisDbIndex)
     : server_(server),
       redisHost_(redisHost),
       redisPort_(redisPort),
+      redisDbIndex_(redisDbIndex),
       redisCtx_(nullptr)
 {}
 
 RackManagerReceiver::~RackManagerReceiver()
 {
+    // Tell the worker to stop and wait for it to drain.
+    {
+        std::lock_guard<std::mutex> lk(queueMutex_);
+        stopping_ = true;
+    }
+    queueCv_.notify_all();
+    if (worker_.joinable())
+    {
+        worker_.join();
+    }
     if (redisCtx_)
     {
         redisFree(redisCtx_);
@@ -94,16 +105,12 @@ RackManagerReceiver::~RackManagerReceiver()
 }
 
 // ---------------------------------------------------------------------------
-// Initialise: connect to Redis + register D-Bus methods
+// Initialise: register D-Bus methods + start worker thread.
+// Redis is connected lazily on the worker so initialize() never blocks
+// the caller if the database is down at boot.
 // ---------------------------------------------------------------------------
 bool RackManagerReceiver::initialize()
 {
-    if (!connectRedis())
-    {
-        LOG_WARNING("RackManagerReceiver: Redis not available -- "
-                    "data will not be persisted until reconnect");
-    }
-
     iface_ = server_.add_interface(RACK_MANAGER_OBJ_PATH, RACK_MANAGER_IFACE);
 
     iface_->register_method(
@@ -111,7 +118,21 @@ bool RackManagerReceiver::initialize()
         [this](const std::string& jsonStr) -> bool {
             LOG_INFO("RackManagerReceiver: SubmitAlert received (%zu bytes)",
                      jsonStr.size());
-            return storeFields(jsonStr, getAlertMappings());
+            Job j{&getAlertMappings(), {}};
+            if (!buildJob(jsonStr, *j.mappings, j))
+            {
+                return false;
+            }
+            std::lock_guard<std::mutex> lk(queueMutex_);
+            if (queue_.size() >= kMaxQueueDepth)
+            {
+                LOG_WARNING("RackManagerReceiver: queue full (%zu); "
+                            "dropping SubmitAlert", queue_.size());
+                return false;
+            }
+            queue_.emplace_back(std::move(j));
+            queueCv_.notify_one();
+            return true;
         });
 
     iface_->register_method(
@@ -119,10 +140,26 @@ bool RackManagerReceiver::initialize()
         [this](const std::string& jsonStr) -> bool {
             LOG_INFO("RackManagerReceiver: SubmitTelemetry received (%zu bytes)",
                      jsonStr.size());
-            return storeFields(jsonStr, getTelemetryMappings());
+            Job j{&getTelemetryMappings(), {}};
+            if (!buildJob(jsonStr, *j.mappings, j))
+            {
+                return false;
+            }
+            std::lock_guard<std::mutex> lk(queueMutex_);
+            if (queue_.size() >= kMaxQueueDepth)
+            {
+                LOG_WARNING("RackManagerReceiver: queue full (%zu); "
+                            "dropping SubmitTelemetry", queue_.size());
+                return false;
+            }
+            queue_.emplace_back(std::move(j));
+            queueCv_.notify_one();
+            return true;
         });
 
     iface_->initialize();
+
+    worker_ = std::thread(&RackManagerReceiver::workerLoop, this);
 
     LOG_INFO("RackManagerReceiver: D-Bus interface registered at %s",
              RACK_MANAGER_OBJ_PATH);
@@ -130,14 +167,14 @@ bool RackManagerReceiver::initialize()
 }
 
 // ---------------------------------------------------------------------------
-// Redis connection (STATE_DB = index 6)
+// Redis connection (STATE_DB index from config; worker-thread only)
 // ---------------------------------------------------------------------------
 bool RackManagerReceiver::connectRedis()
 {
     struct timeval timeout = {2, 0};
 
-    // Try TCP first
-    redisCtx_ = redisConnectWithTimeout(redisHost_.c_str(), redisPort_, timeout);
+    redisCtx_ = redisConnectWithTimeout(redisHost_.c_str(), redisPort_,
+                                        timeout);
     if (redisCtx_ && redisCtx_->err)
     {
         LOG_WARNING("RackManagerReceiver: TCP connect failed: %s",
@@ -146,7 +183,6 @@ bool RackManagerReceiver::connectRedis()
         redisCtx_ = nullptr;
     }
 
-    // Fallback to unix sockets
     if (!redisCtx_)
     {
         const char* sockets[] = {
@@ -154,7 +190,6 @@ bool RackManagerReceiver::connectRedis()
             "/run/redis/redis.sock",
             "/var/run/redis.sock",
             nullptr};
-
         for (int i = 0; sockets[i] && !redisCtx_; ++i)
         {
             redisCtx_ = redisConnectUnixWithTimeout(sockets[i], timeout);
@@ -172,113 +207,119 @@ bool RackManagerReceiver::connectRedis()
         return false;
     }
 
-    // SELECT 6  (STATE_DB)
     redisReply* reply = static_cast<redisReply*>(
-        redisCommand(redisCtx_, "SELECT 6"));
+        redisCommand(redisCtx_, "SELECT %d", redisDbIndex_));
     if (!reply || reply->type == REDIS_REPLY_ERROR)
     {
-        LOG_ERROR("RackManagerReceiver: Failed to SELECT STATE_DB (6)");
-        if (reply)
-        {
-            freeReplyObject(reply);
-        }
+        LOG_ERROR("RackManagerReceiver: Failed to SELECT STATE_DB (%d)",
+                  redisDbIndex_);
+        if (reply) { freeReplyObject(reply); }
         redisFree(redisCtx_);
         redisCtx_ = nullptr;
         return false;
     }
     freeReplyObject(reply);
 
-    LOG_INFO("RackManagerReceiver: Connected to Redis STATE_DB");
+    LOG_INFO("RackManagerReceiver: Connected to Redis STATE_DB (idx=%d)",
+             redisDbIndex_);
     return true;
 }
 
 // ---------------------------------------------------------------------------
-// Walk mapping table, extract values from JSON, write to Redis
+// Parse JSON + walk mapping table on the dispatch thread.  Cheap; the
+// I/O is what we keep off this thread.
 // ---------------------------------------------------------------------------
-bool RackManagerReceiver::storeFields(
-    const std::string& jsonStr,
-    const std::vector<FieldMapping>& mappings)
+bool RackManagerReceiver::buildJob(const std::string& jsonStr,
+                                   const std::vector<FieldMapping>& mappings,
+                                   Job& out)
 {
-    // Parse JSON
     Json::Value root;
     Json::CharReaderBuilder builder;
     std::istringstream iss(jsonStr);
     std::string errors;
     if (!Json::parseFromStream(builder, iss, &root, &errors))
     {
-        LOG_ERROR("RackManagerReceiver: JSON parse error: %s", errors.c_str());
+        LOG_ERROR("RackManagerReceiver: JSON parse error: %s",
+                  errors.c_str());
         return false;
     }
 
-    // Lazy reconnect if we lost the connection
-    if (!redisCtx_)
-    {
-        connectRedis();
-    }
-
-    int stored = 0;
-    int skipped = 0;
+    out.writes.reserve(mappings.size());
     for (const auto& m : mappings)
     {
         Json::Value val = resolveJsonPath(root, m.jsonPath);
-        if (val.isNull())
-        {
-            ++skipped;
-            continue;
-        }
-
+        if (val.isNull()) { continue; }
         std::string strVal = valueToString(val, m.type);
-        if (strVal.empty())
-        {
-            ++skipped;
-            continue;
-        }
-
-        if (hset(m.redisKey, m.redisField, strVal))
-        {
-            ++stored;
-            LOG_DEBUG("  %s -> %s %s = %s",
-                      m.jsonPath.c_str(), m.redisKey.c_str(),
-                      m.redisField.c_str(), strVal.c_str());
-        }
+        if (strVal.empty()) { continue; }
+        out.writes.emplace_back(m.redisKey, m.redisField, std::move(strVal));
     }
-
-    LOG_INFO("RackManagerReceiver: Stored %d fields (%d skipped / %zu total)",
-             stored, skipped, mappings.size());
-    return stored > 0;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
-// Redis HSET helper
+// Worker thread: pop jobs, pipeline HSETs to Redis.
 // ---------------------------------------------------------------------------
-bool RackManagerReceiver::hset(const std::string& key,
-                               const std::string& field,
-                               const std::string& value)
+void RackManagerReceiver::workerLoop()
 {
-    if (!redisCtx_)
+    while (true)
     {
-        return false;
+        Job job;
+        {
+            std::unique_lock<std::mutex> lk(queueMutex_);
+            queueCv_.wait(lk, [this] {
+                return stopping_ || !queue_.empty();
+            });
+            if (stopping_ && queue_.empty()) { return; }
+            job = std::move(queue_.front());
+            queue_.pop_front();
+        }
+        drainOne(job);
+    }
+}
+
+void RackManagerReceiver::drainOne(const Job& job)
+{
+    if (!redisCtx_ && !connectRedis())
+    {
+        LOG_WARNING("RackManagerReceiver: dropping %zu writes (no Redis)",
+                    job.writes.size());
+        return;
     }
 
-    redisReply* reply = static_cast<redisReply*>(
-        redisCommand(redisCtx_, "HSET %s %s %s",
-                     key.c_str(), field.c_str(), value.c_str()));
-    if (!reply)
+    // Pipeline: queue all commands, then read all replies.
+    for (const auto& [key, field, value] : job.writes)
     {
-        LOG_ERROR("RackManagerReceiver: HSET failed (connection lost?)");
-        redisFree(redisCtx_);
-        redisCtx_ = nullptr;
-        return false;
+        if (redisAppendCommand(redisCtx_, "HSET %s %s %s",
+                               key.c_str(), field.c_str(),
+                               value.c_str()) != REDIS_OK)
+        {
+            LOG_ERROR("RackManagerReceiver: redisAppendCommand failed: %s",
+                      redisCtx_->errstr);
+            redisFree(redisCtx_);
+            redisCtx_ = nullptr;
+            return;
+        }
     }
 
-    bool ok = (reply->type != REDIS_REPLY_ERROR);
-    if (!ok)
+    int stored = 0;
+    for (std::size_t i = 0; i < job.writes.size(); ++i)
     {
-        LOG_ERROR("RackManagerReceiver: HSET %s %s error: %s",
-                  key.c_str(), field.c_str(), reply->str);
+        redisReply* reply = nullptr;
+        if (redisGetReply(redisCtx_,
+                          reinterpret_cast<void**>(&reply)) != REDIS_OK)
+        {
+            LOG_ERROR("RackManagerReceiver: redisGetReply failed: %s",
+                      redisCtx_->errstr);
+            redisFree(redisCtx_);
+            redisCtx_ = nullptr;
+            return;
+        }
+        if (reply && reply->type != REDIS_REPLY_ERROR) { ++stored; }
+        if (reply) { freeReplyObject(reply); }
     }
-    freeReplyObject(reply);
-    return ok;
+
+    LOG_INFO("RackManagerReceiver: persisted %d/%zu fields",
+             stored, job.writes.size());
 }
 
 } // namespace sonic::dbus_bridge

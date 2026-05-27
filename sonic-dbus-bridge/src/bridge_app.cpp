@@ -84,12 +84,16 @@ bool BridgeApp::initialize()
     // Create state objects
     createStateObjects();
 
-    // Initialize rack manager receiver (alert/telemetry via D-Bus -> Redis)
+    // Initialize rack manager receiver (alert/telemetry via D-Bus -> Redis).
+    // Uses its own connection / object server so it owns the
+    // com.sonic.RackManager well-known name independently of the
+    // Inventory connection.
     LOG_INFO("Initializing Rack Manager Receiver...");
     rackManagerReceiver_ = std::make_unique<RackManagerReceiver>(
-        *inventoryServer_,
+        *rackManagerServer_,
         configMgr_->getStateDbHost(),
-        configMgr_->getStateDbPort());
+        configMgr_->getStateDbPort(),
+        configMgr_->getStateDbIndex());
     if (rackManagerReceiver_->initialize())
     {
         LOG_INFO("Rack Manager Receiver initialized");
@@ -224,6 +228,22 @@ bool BridgeApp::connectDbus()
         stateConn_ = std::make_shared<sdbusplus::asio::connection>(io_, bus);
         stateConn_->request_name(STATE_HOST_BUSNAME);
         stateServer_ = std::make_unique<sdbusplus::asio::object_server>(stateConn_);
+
+        // Rack Manager Receiver connection
+        LOG_INFO("Requesting D-Bus name: %s", RACK_MANAGER_BUSNAME);
+        bus = nullptr;
+        r = sd_bus_open_system(&bus);
+        if (r < 0)
+        {
+            LOG_ERROR("Failed to open system bus for Rack Manager: %s",
+                      strerror(-r));
+            return false;
+        }
+        rackManagerConn_ =
+            std::make_shared<sdbusplus::asio::connection>(io_, bus);
+        rackManagerConn_->request_name(RACK_MANAGER_BUSNAME);
+        rackManagerServer_ =
+            std::make_unique<sdbusplus::asio::object_server>(rackManagerConn_);
 
         LOG_INFO("Connected to D-Bus successfully (5 connections)");
         return true;

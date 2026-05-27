@@ -1,6 +1,16 @@
+#######################################
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 Nexthop AI
+# Copyright (C) 2026 SONiC Project
+# Author: Nexthop AI
+# Author: SONiC Project
+# License file: sonic-redfish/LICENSE
+#######################################
+
 usr/bin/sonic-dbus-bridge
 etc/sonic-dbus-bridge/config.yaml
 etc/dbus-1/system.d/xyz.openbmc_project.ObjectMapper.conf
 etc/dbus-1/system.d/xyz.openbmc_project.User.Manager.conf
 etc/dbus-1/system.d/xyz.openbmc_project.Inventory.Manager.conf
+etc/dbus-1/system.d/com.sonic.RackManager.conf
 var/lib/sonic-dbus-bridge
