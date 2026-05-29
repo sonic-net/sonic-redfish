@@ -35,18 +35,24 @@ namespace redfish
  * sonic-dbus-bridge via D-Bus.  The bridge uses a declarative
  * field-mapping table to persist the data in Redis STATE_DB.
  *
- * Request body example:
+ * Request body example (flat form):
  *   {
- *     "Alerts": {
- *       "FlowRateDeviation": {
- *         "InletTemperature": 18,
- *         "FlowRate": 58,
+ *     "Redfish": {
+ *       "LiquidPressureDeviation": {
+ *         "LiquidPressure": 68,
  *         "Severity": "Major",
+ *         "RscmPosition": 1
+ *       },
+ *       "LeakDetected": {
+ *         "Severity": "Critical",
  *         "RscmPosition": 1
  *       },
  *       ...
  *     }
  *   }
+ *
+ * Wrapped form (ShutdownAlert) is also accepted; see
+ * oem-extension/README.md for the full alert vocabulary.
  */
 inline void handleSonicSubmitAlert(
     App& app, const crow::Request& req,
@@ -84,10 +90,12 @@ inline void handleSonicSubmitAlert(
         return;
     }
 
-    // Require the top-level key
-    if (!reqJson.contains("Alerts"))
+    // Require the top-level key.  The rack-manager firmware wraps every
+    // alert payload (flat or ShutdownAlert form) under "Redfish"; the
+    // bridge's field_mapping paths assume that envelope.
+    if (!reqJson.contains("Redfish"))
     {
-        messages::propertyMissing(asyncResp->res, "Alerts");
+        messages::propertyMissing(asyncResp->res, "Redfish");
         return;
     }
 

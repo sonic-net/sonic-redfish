@@ -72,11 +72,12 @@
             "description": "Submits structured alert data from a rack manager to the switch BMC.",
             "longDescription": "This action shall submit a set of structured alert entries from a rack manager to the switch BMC.  Per DMTF action idiom this definition serves two roles: the `parameters` block describes the POST request body (clients sending POSTs should look there); the `properties` block (target, title) describes how the action is advertised on GET of the parent resource.",
             "parameters": {
-                "Alerts": {
-                    "$ref": "#/definitions/AlertsByType",
-                    "description": "Alert entries keyed by alert type name.",
-                    "longDescription": "Required.  See AlertsByType for the map shape; the alert type keys are vendor-defined (for example, FlowRateDeviation, LeakDetected) and are not enumerated by this schema.",
-                    "requiredParameter": true
+                "Redfish": {
+                    "additionalProperties": true,
+                    "description": "Open container for alert entries, keyed by alert type name.",
+                    "longDescription": "Required.  Keys are vendor-defined alert type names; values are either an AlertEntry or a wrapper object (for example, ShutdownAlert) whose children are themselves AlertEntry-shaped with a shared RscmPosition on the wrapper.",
+                    "requiredParameter": true,
+                    "type": "object"
                 }
             },
             "properties": {
@@ -92,19 +93,13 @@
             },
             "type": "object"
         },
-        "AlertsByType": {
-            "additionalProperties": { "$ref": "#/definitions/AlertEntry" },
-            "description": "Map of alert type name to AlertEntry.",
-            "longDescription": "This object shall be a map whose keys are vendor-defined alert type names (for example, FlowRateDeviation, LeakDetected) and whose values conform to AlertEntry.  The set of legal keys is intentionally open so that new alert types can be introduced without a schema version bump.",
-            "type": "object"
-        },
         "AlertEntry": {
             "additionalProperties": true,
             "description": "A single alert entry.",
-            "longDescription": "Each entry shall include Severity and RscmPosition.  Additional properties beyond these are alert-type specific and shall be passed through to the BMC for storage.",
+            "longDescription": "Each entry shall include Severity.  RscmPosition is present on flat alerts and inherited from the wrapper for nested alerts under a ShutdownAlert-style container.  Additional properties beyond these are alert-type specific (for example FlowRate, LiquidPressure, InletTemperature) and shall be passed through to the BMC for storage.",
             "properties": {
                 "RscmPosition": {
-                    "description": "RSCM position identifier of the reporting device.",
+                    "description": "RSCM position identifier; optional in nested form (inherited from the parent wrapper).",
                     "type": "integer"
                 },
                 "Severity": {
@@ -112,7 +107,7 @@
                     "description": "Severity of the alert condition."
                 }
             },
-            "required": ["RscmPosition", "Severity"],
+            "required": ["Severity"],
             "type": "object"
         },
         "SubmitTelemetry": {
@@ -142,102 +137,8 @@
         },
         "Alarms": {
             "additionalProperties": true,
-            "description": "Container for alarm and sensor telemetry submitted by a rack manager.",
-            "longDescription": "This object may include additional properties beyond those listed here.",
-            "properties": {
-                "ConfigFileCorrupted": {
-                    "description": "Indicates whether the configuration file is corrupted.",
-                    "type": "boolean"
-                },
-                "EnergyValveActive": {
-                    "description": "Indicates whether the energy valve is active.",
-                    "type": "boolean"
-                },
-                "EnergyValvePresent": {
-                    "description": "Indicates whether the energy valve is present.",
-                    "type": "boolean"
-                },
-                "ErrorState": {
-                    "description": "Error state code reported by the rack manager.",
-                    "type": "string"
-                },
-                "FlowRateDeviation": {
-                    "$ref": "#/definitions/Deviation",
-                    "description": "Flow-rate deviation reading."
-                },
-                "FlowrateSensorActive": {
-                    "description": "Indicates whether the flow-rate sensor is active.",
-                    "type": "boolean"
-                },
-                "GlycolConcentration": {
-                    "description": "Glycol concentration value.",
-                    "type": "number"
-                },
-                "InletTempDeviation": {
-                    "$ref": "#/definitions/Deviation",
-                    "description": "Inlet temperature deviation reading."
-                },
-                "LeakDetected": {
-                    "$ref": "#/definitions/LeakDetected",
-                    "description": "Leak detection state."
-                },
-                "LiquidPressureDeviation": {
-                    "$ref": "#/definitions/Deviation",
-                    "description": "Liquid pressure deviation reading."
-                },
-                "PressureSensorActive": {
-                    "description": "Indicates whether the pressure sensor is active.",
-                    "type": "boolean"
-                },
-                "RscmPosition": {
-                    "description": "RSCM position identifier of the reporting device.",
-                    "type": "integer"
-                },
-                "TemperatureSensorActive": {
-                    "description": "Indicates whether the temperature sensor is active.",
-                    "type": "boolean"
-                },
-                "ThresholdConfigVersion": {
-                    "description": "Threshold configuration version string.",
-                    "type": "string"
-                }
-            },
-            "type": "object"
-        },
-        "Deviation": {
-            "additionalProperties": false,
-            "description": "A scalar deviation reading paired with a severity.",
-            "longDescription": "This object shall describe a single deviation reading, common to flow-rate, inlet-temperature, and liquid-pressure conditions.  Value is the measured quantity in vendor-defined units; Severity classifies the deviation.",
-            "properties": {
-                "Severity": {
-                    "$ref": "#/definitions/SonicSeverity",
-                    "description": "Severity of the deviation."
-                },
-                "Value": {
-                    "description": "Measured value of the deviating quantity.",
-                    "type": "number"
-                }
-            },
-            "type": "object"
-        },
-        "LeakDetected": {
-            "additionalProperties": false,
-            "description": "Leak detection state.",
-            "longDescription": "This object shall describe the leak-detection state reported by the rack manager.",
-            "properties": {
-                "LeakDetected": {
-                    "description": "Indicates whether a leak has been detected.",
-                    "type": "boolean"
-                },
-                "LeakRopeBreak": {
-                    "description": "Indicates whether the leak-detection rope is broken.",
-                    "type": "boolean"
-                },
-                "Severity": {
-                    "$ref": "#/definitions/SonicSeverity",
-                    "description": "Severity of the leak condition."
-                }
-            },
+            "description": "Open telemetry payload container.",
+            "longDescription": "Following the SubmitAlert idiom (the `Redfish` parameter on SubmitAlert is also an open container; see AlertEntry for the per-entry shape), this object is intentionally open: the schema does not enumerate individual sensor or measurement fields.  The set of recognised keys is defined by the bridge's declarative field-mapping table.",
             "type": "object"
         },
         "SonicSeverity": {

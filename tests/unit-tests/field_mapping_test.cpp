@@ -77,15 +77,6 @@ static void checkEntryInvariants(const FieldMapping& m, const std::string& ctx)
     // JSON paths use dot notation; spaces or leading/trailing dots are bugs.
     checkPathSyntax(m.jsonPath, ctx, "jsonPath");
 
-    // altJsonPath is optional, but if present must follow the same syntax
-    // rules and must not equal the primary path (would be a copy-paste bug).
-    if (!m.altJsonPath.empty())
-    {
-        checkPathSyntax(m.altJsonPath, ctx, "altJsonPath");
-        EXPECT_NE(m.altJsonPath, m.jsonPath)
-            << ctx << ": altJsonPath equals jsonPath";
-    }
-
     EXPECT_TRUE(isValidFieldType(m.type)) << ctx << ": invalid FieldType";
 }
 

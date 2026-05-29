@@ -252,10 +252,6 @@ bool RackManagerReceiver::buildJob(const std::string& jsonStr,
     for (const auto& m : mappings)
     {
         Json::Value val = resolveJsonPath(root, m.jsonPath);
-        if (val.isNull() && !m.altJsonPath.empty())
-        {
-            val = resolveJsonPath(root, m.altJsonPath);
-        }
         if (val.isNull()) { continue; }
         std::string strVal = valueToString(val, m.type);
         if (strVal.empty()) { continue; }
