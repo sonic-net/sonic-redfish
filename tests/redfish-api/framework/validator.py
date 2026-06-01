@@ -20,11 +20,16 @@ from pathlib import Path
 
 ALLOWED_METHODS = {"GET", "POST", "PATCH", "PUT", "DELETE"}
 ALLOWED_KEYS = {
-    "name", "description", "method", "endpoint", 
-    "expected_status", "expected_response", "validators", 
-    "prerequisite_calls", "auth"
+    "name", "description", "method", "endpoint",
+    "expected_status", "expected_response", "validators",
+    "prerequisite_calls", "auth",
+    # POST/PATCH/PUT request body + Redis pre/post hooks
+    "body", "redis_setup", "redis_validations",
 }
 REQUIRED_KEYS = {"name", "description", "method", "endpoint", "expected_status"}
+ALLOWED_REDIS_DBS = {"state_db", "config_db"}
+ALLOWED_REDIS_ACTIONS = {"delete"}
+ALLOWED_FIELD_TYPES = {"string", "int", "float", "bool"}
 
 def validate_test_file(filepath: Path) -> list[str]:
     """
@@ -71,6 +76,14 @@ def validate_test_file(filepath: Path) -> list[str]:
         if "expected_status" in case and not isinstance(case["expected_status"], int):
             errors.append(f"Case '{name}': 'expected_status' must be an integer.")
 
+        # HTTP 204 No Content forbids a response body (RFC 7230 §3.3.3).
+        # Asserting a body against it is always a bug.
+        if case.get("expected_status") == 204 and "expected_response" in case:
+            errors.append(
+                f"Case '{name}': 'expected_response' is not allowed when "
+                f"'expected_status' is 204 (No Content has no body)."
+            )
+
         # Extract logic and prerequisite validation
         extracted_states = set()
         if "prerequisite_calls" in case:
@@ -113,5 +126,61 @@ def validate_test_file(filepath: Path) -> list[str]:
         missing_states = used_states - extracted_states
         if missing_states:
             errors.append(f"Case '{name}': Uses {{STATE.*}} variables not extracted by any prerequisite: {', '.join(missing_states)}")
+
+        # body (request payload for POST/PATCH/PUT)
+        if "body" in case:
+            method = case.get("method", "GET")
+            if method not in {"POST", "PATCH", "PUT"}:
+                errors.append(f"Case '{name}': 'body' is only valid for POST/PATCH/PUT (got '{method}').")
+            if not isinstance(case["body"], (dict, list)):
+                errors.append(f"Case '{name}': 'body' must be a JSON object or array.")
+
+        # redis_setup: list of pre-condition ops applied before the request
+        if "redis_setup" in case:
+            if not isinstance(case["redis_setup"], list):
+                errors.append(f"Case '{name}': 'redis_setup' must be an array.")
+            else:
+                for s_idx, entry in enumerate(case["redis_setup"]):
+                    loc = f"Case '{name}', redis_setup[{s_idx}]"
+                    if not isinstance(entry, dict):
+                        errors.append(f"{loc}: Must be an object.")
+                        continue
+                    if entry.get("db") not in ALLOWED_REDIS_DBS:
+                        errors.append(f"{loc}: 'db' must be one of {sorted(ALLOWED_REDIS_DBS)}.")
+                    if entry.get("action") not in ALLOWED_REDIS_ACTIONS:
+                        errors.append(f"{loc}: 'action' must be one of {sorted(ALLOWED_REDIS_ACTIONS)}.")
+                    if entry.get("action") == "delete":
+                        if "key" not in entry and "keys" not in entry:
+                            errors.append(f"{loc}: delete requires 'key' or 'keys'.")
+                        if "keys" in entry and not isinstance(entry["keys"], list):
+                            errors.append(f"{loc}: 'keys' must be an array.")
+
+        # redis_validations: list of post-request DB checks
+        if "redis_validations" in case:
+            if not isinstance(case["redis_validations"], list):
+                errors.append(f"Case '{name}': 'redis_validations' must be an array.")
+            else:
+                for r_idx, rv in enumerate(case["redis_validations"]):
+                    loc = f"Case '{name}', redis_validations[{r_idx}]"
+                    if not isinstance(rv, dict):
+                        errors.append(f"{loc}: Must be an object.")
+                        continue
+                    if rv.get("db") not in ALLOWED_REDIS_DBS:
+                        errors.append(f"{loc}: 'db' must be one of {sorted(ALLOWED_REDIS_DBS)}.")
+                    if "key" not in rv or not isinstance(rv["key"], str):
+                        errors.append(f"{loc}: 'key' (string) is required.")
+                    if "expected_fields" in rv and not isinstance(rv["expected_fields"], dict):
+                        errors.append(f"{loc}: 'expected_fields' must be an object.")
+                    if "timeout" in rv and not isinstance(rv["timeout"], (int, float)):
+                        errors.append(f"{loc}: 'timeout' must be a number.")
+                    if "wait_for_field" in rv and not isinstance(rv["wait_for_field"], str):
+                        errors.append(f"{loc}: 'wait_for_field' must be a string.")
+                    for fname, fexp in (rv.get("expected_fields") or {}).items():
+                        if isinstance(fexp, dict) and "type" in fexp \
+                                and fexp["type"] not in ALLOWED_FIELD_TYPES:
+                            errors.append(
+                                f"{loc}: field '{fname}' has unsupported type "
+                                f"'{fexp['type']}' (allowed: {sorted(ALLOWED_FIELD_TYPES)})."
+                            )
 
     return errors

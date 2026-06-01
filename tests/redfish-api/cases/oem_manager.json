@@ -106,14 +106,56 @@
     "description": "Validates SubmitAlert rejects POSTs with an empty body as malformed JSON",
     "method": "POST",
     "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
-    "expected_status": 400
+    "expected_status": 400,
+    "expected_response": {
+      "error": {
+        "code": "Base.1.19.MalformedJSON"
+      }
+    }
   },
   {
     "name": "test_submit_telemetry_empty_body_returns_400",
     "description": "Validates SubmitTelemetry rejects POSTs with an empty body as malformed JSON",
     "method": "POST",
     "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
-    "expected_status": 400
+    "expected_status": 400,
+    "expected_response": {
+      "error": {
+        "code": "Base.1.19.MalformedJSON"
+      }
+    }
+  },
+  {
+    "name": "test_submit_alert_missing_top_level_key_returns_400",
+    "description": "SubmitAlert: well-formed JSON missing the required 'Redfish' key triggers PropertyMissing",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
+    "body": { "NotRedfish": {} },
+    "expected_status": 400,
+    "expected_response": {
+      "Redfish@Message.ExtendedInfo": [
+        {
+          "MessageId": "Base.1.19.PropertyMissing",
+          "MessageArgs": ["Redfish"]
+        }
+      ]
+    }
+  },
+  {
+    "name": "test_submit_telemetry_missing_top_level_key_returns_400",
+    "description": "SubmitTelemetry: well-formed JSON missing the required 'Alarms' key triggers PropertyMissing",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
+    "body": { "NotAlarms": {} },
+    "expected_status": 400,
+    "expected_response": {
+      "Alarms@Message.ExtendedInfo": [
+        {
+          "MessageId": "Base.1.19.PropertyMissing",
+          "MessageArgs": ["Alarms"]
+        }
+      ]
+    }
   },
   {
     "name": "test_submit_alert_get_method_not_allowed",
@@ -152,6 +194,255 @@
       {
         "type": "exists",
         "path": "Location"
+      }
+    ]
+  },
+  {
+    "name": "test_submit_telemetry_persists_to_state_db",
+    "description": "Valid SubmitTelemetry POST lands in RSCM_TELEMETRY|alarms (sensor flags + scalar + InletTempDeviation sub-object)",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
+    "body": {
+      "Alarms": {
+        "EnergyValveActive": true,
+        "FlowrateSensorActive": false,
+        "InletTempDeviation": {
+          "InletTemperature": 25.3,
+          "Severity": "Major"
+        },
+        "RscmPosition": 1
+      }
+    },
+    "expected_status": 204,
+    "redis_validations": [
+      {
+        "db": "state_db",
+        "key": "RSCM_TELEMETRY|alarms",
+        "wait_for_field": "inlet_temp_deviation_severity",
+        "timeout": 5.0,
+        "expected_fields": {
+          "energy_valve_active": "true",
+          "flowrate_sensor_active": "false",
+          "rscm_position": "1",
+          "inlet_temp_deviation_severity": "Major",
+          "inlet_temp_deviation_temperature": { "type": "float", "equals": 25.3 }
+        }
+      }
+    ]
+  },
+  {
+    "name": "test_submit_telemetry_all_deviation_kinds_persist",
+    "description": "All three deviation sub-objects plus the leak block round-trip in one SubmitTelemetry POST",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
+    "body": {
+      "Alarms": {
+        "FlowRateDeviation":       { "FlowRate": 28,         "Severity": "Normal" },
+        "InletTempDeviation":      { "InletTemperature": 17, "Severity": "Normal" },
+        "LiquidPressureDeviation": { "LiquidPressure": 2,    "Severity": "Critical" },
+        "LeakDetected": {
+          "LeakDetected": false,
+          "LeakRopeBreak": false,
+          "Severity": "Normal"
+        }
+      }
+    },
+    "expected_status": 204,
+    "redis_validations": [
+      {
+        "db": "state_db",
+        "key": "RSCM_TELEMETRY|alarms",
+        "wait_for_field": "leak_detected_severity",
+        "expected_fields": {
+          "flow_rate_deviation_flow_rate":      { "type": "float", "equals": 28 },
+          "inlet_temp_deviation_temperature":   { "type": "float", "equals": 17 },
+          "liquid_pressure_deviation_pressure": { "type": "float", "equals": 2 },
+          "liquid_pressure_deviation_severity": "Critical",
+          "leak_detected":                      "false",
+          "leak_rope_break":                    "false",
+          "leak_detected_severity":             "Normal"
+        }
+      }
+    ]
+  },
+  {
+    "name": "test_submit_telemetry_minimal_payload_persists",
+    "description": "Parameter variation: a minimal SubmitTelemetry payload (single flag) still drains to STATE_DB",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
+    "body": {
+      "Alarms": {
+        "EnergyValveActive": true,
+        "RscmPosition": 2
+      }
+    },
+    "expected_status": 204,
+    "redis_validations": [
+      {
+        "db": "state_db",
+        "key": "RSCM_TELEMETRY|alarms",
+        "wait_for_field": "rscm_position",
+        "expected_fields": {
+          "energy_valve_active": "true",
+          "rscm_position": "2"
+        }
+      }
+    ]
+  },
+  {
+    "name": "test_submit_alert_flat_form_persists",
+    "description": "Flat-form SubmitAlert: each alert type lands under its own RSCM_ALERT|<name> key",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
+    "body": {
+      "Redfish": {
+        "Alerts": {
+          "InletTemperature": 18,
+          "FlowRate": 58,
+          "Severity": "Minor",
+          "RscmPosition": 1
+        },
+        "LiquidPressureDeviation": {
+          "LiquidPressure": 68,
+          "Severity": "Major",
+          "RscmPosition": 1
+        },
+        "InletTemperatureDeviation": {
+          "InletTemperature": 46,
+          "Severity": "Critical",
+          "RscmPosition": 1
+        },
+        "LeakDetected":  { "Severity": "Critical", "RscmPosition": 1 },
+        "LeakRopeBreak": { "Severity": "Critical", "RscmPosition": 1 }
+      }
+    },
+    "expected_status": 204,
+    "redis_validations": [
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|LeakRopeBreak",
+        "wait_for_field": "severity",
+        "expected_fields": { "severity": "Critical", "rscm_position": "1" }
+      },
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|Alerts",
+        "expected_fields": {
+          "severity": "Minor",
+          "rscm_position": "1",
+          "inlet_temperature": { "type": "float", "equals": 18 },
+          "flow_rate":         { "type": "float", "equals": 58 }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|LiquidPressureDeviation",
+        "expected_fields": {
+          "severity": "Major",
+          "liquid_pressure": { "type": "float", "equals": 68 }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|InletTemperatureDeviation",
+        "expected_fields": {
+          "severity": "Critical",
+          "inlet_temperature": { "type": "float", "equals": 46 }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|LeakDetected",
+        "expected_fields": { "rscm_position": "1" }
+      }
+    ]
+  },
+  {
+    "name": "test_submit_alert_shutdown_wrapped_form_persists",
+    "description": "Wrapped-form SubmitAlert: leaves persist under RSCM_ALERT|ShutdownAlert|<Leaf>, wrapper holds the single RscmPosition",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
+    "body": {
+      "Redfish": {
+        "ShutdownAlert": {
+          "FlowRateDeviation":       { "FlowRate": 58,         "Severity": "Minor" },
+          "TempDeviation":           { "InletTemperature": 17, "Severity": "Normal" },
+          "LiquidPressureDeviation": { "LiquidPressure": 68,   "Severity": "Major" },
+          "LeakDetected":            { "Severity": "Critical" },
+          "LeakRopeBreak":           { "Severity": "Critical" },
+          "RscmPosition": 3
+        }
+      }
+    },
+    "expected_status": 204,
+    "redis_validations": [
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|ShutdownAlert",
+        "wait_for_field": "rscm_position",
+        "expected_fields": { "rscm_position": "3" }
+      },
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|ShutdownAlert|FlowRateDeviation",
+        "expected_fields": {
+          "severity": "Minor",
+          "flow_rate": { "type": "float", "equals": 58 }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|ShutdownAlert|TempDeviation",
+        "expected_fields": {
+          "severity": "Normal",
+          "inlet_temperature": { "type": "float", "equals": 17 }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|ShutdownAlert|LiquidPressureDeviation",
+        "expected_fields": {
+          "severity": "Major",
+          "liquid_pressure": { "type": "float", "equals": 68 }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|ShutdownAlert|LeakDetected",
+        "expected_fields": { "severity": "Critical" }
+      },
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|ShutdownAlert|LeakRopeBreak",
+        "expected_fields": { "severity": "Critical" }
+      }
+    ]
+  },
+  {
+    "name": "test_submit_alert_individual_leak_only",
+    "description": "Parameter variation: single-alert SubmitAlert (LeakDetected only) populates only the matching key",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
+    "body": {
+      "Redfish": {
+        "LeakDetected": { "Severity": "Critical", "RscmPosition": 2 }
+      }
+    },
+    "expected_status": 204,
+    "redis_validations": [
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|LeakDetected",
+        "wait_for_field": "severity",
+        "expected_fields": {
+          "severity": "Critical",
+          "rscm_position": "2"
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RSCM_ALERT|LeakRopeBreak",
+        "not_exists": true
       }
     ]
   }
