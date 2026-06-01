@@ -4,19 +4,44 @@ SONiC Redfish implementation providing bmcweb and sonic-dbus-bridge as Debian pa
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [Quick Start](#quick-start)
-- [Build System](#build-system)
-- [Patch Management](#patch-management)
-- [Cleanup Targets](#cleanup-targets)
-- [Dependency Management](#dependency-management)
-- [Configuration](#configuration)
-- [Components](#components)
-- [Redfish API Endpoints](#redfish-api-endpoints)
-- [Troubleshooting](#troubleshooting)
-- [License](#license)
+1. [Overview](#1-overview)
+2. [Quick Start](#2-quick-start)
+   1. [Prerequisites](#21-prerequisites)
+   2. [Build](#22-build)
+   3. [Build Targets](#23-build-targets)
+   4. [Build Options](#24-build-options)
+3. [Build System](#3-build-system)
+   1. [Build Flow](#31-build-flow)
+   2. [Automatic Dependencies](#32-automatic-dependencies)
+4. [Patch Management](#4-patch-management)
+5. [Cleanup Targets](#5-cleanup-targets)
+   1. [`clean` - Remove build artifacts, reset source](#51-clean---remove-build-artifacts-reset-source)
+   2. [`reset` - Complete cleanup](#52-reset---complete-cleanup)
+6. [Dependency Management](#6-dependency-management)
+   1. [bmcweb dependencies](#61-bmcweb-dependencies)
+   2. [sonic-dbus-bridge dependencies](#62-sonic-dbus-bridge-dependencies)
+7. [Components](#7-components)
+   1. [bmcweb](#71-bmcweb)
+   2. [sonic-dbus-bridge](#72-sonic-dbus-bridge)
+8. [Configuration](#8-configuration)
+   1. [sonic-dbus-bridge configuration](#81-sonic-dbus-bridge-configuration)
+   2. [D-Bus configuration files](#82-d-bus-configuration-files)
+9. [OEM Extension](#9-oem-extension)
+10. [Testing](#10-testing)
+11. [Redfish API Endpoints](#11-redfish-api-endpoints)
+    1. [FirmwareInventory Collection](#111-firmwareinventory-collection)
+    2. [FirmwareInventory - BIOS](#112-firmwareinventory---bios)
+    3. [FirmwareInventory - BMC Firmware](#113-firmwareinventory---bmc-firmware)
+    4. [FirmwareInventory - Switch](#114-firmwareinventory---switch)
+    5. [Service Root](#115-service-root)
+    6. [ComputerSystem.Reset - Power On](#116-computersystemreset---power-on)
+    7. [ComputerSystem.Reset - Graceful Shutdown](#117-computersystemreset---graceful-shutdown)
+    8. [ComputerSystem.Reset - Power Cycle](#118-computersystemreset---power-cycle)
+12. [License](#12-license)
 
-## Overview
+---
+
+## 1. Overview
 
 This repository contains:
 - **bmcweb**: OpenBMC web server source code with SONiC-specific patches
@@ -24,15 +49,19 @@ This repository contains:
 
 Both components are built as Debian packages (`.deb`) for easy integration with SONiC.
 
-## Quick Start
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
 
-### Prerequisites
+---
+
+## 2. Quick Start
+
+### 2.1. Prerequisites
 
 - Docker installed on your system
 - Git
 - sudo access (for cleaning root-owned build artifacts)
 
-### Build
+### 2.2. Build
 
 ```bash
 # Build all components (Docker-based, produces .deb packages)
@@ -48,15 +77,15 @@ Build artifacts will be available in `target/debs/trixie/`:
 - `sonic-dbus-bridge_1.0.0_arm64.deb`
 - `sonic-dbus-bridge-dbgsym_1.0.0_arm64.deb`
 
-### Build Targets
+### 2.3. Build Targets
 
 ```bash
 # Show all available targets
 make help
 
 # Build individual components (automatically runs clean + dependencies)
-make build-bmcweb    # Runs: clean → setup-bmcweb → apply-patches → build
-make build-bridge    # Runs: clean → build
+make build-bmcweb    # Runs: clean -> setup-bmcweb -> apply-patches -> build
+make build-bridge    # Runs: clean -> build
 
 # Clean build artifacts (removes build dirs, resets bmcweb source)
 make clean
@@ -65,7 +94,7 @@ make clean
 make reset
 ```
 
-### Build Options
+### 2.4. Build Options
 
 ```bash
 # Use custom number of parallel jobs (default: nproc)
@@ -81,7 +110,11 @@ make BMCWEB_HEAD_COMMIT=abc123
 make BMCWEB_REPO_URL=https://github.com/custom/bmcweb.git
 ```
 
-## Build System
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
+
+---
+
+## 3. Build System
 
 The build system is designed for **Debian Trixie** and uses:
 
@@ -91,11 +124,11 @@ The build system is designed for **Debian Trixie** and uses:
 4. **Automatic dependencies**: Build targets automatically trigger required cleanup and setup steps
 5. **Patch management**: Uses a `patches/series` file to define patch order
 
-### Build Flow
+### 3.1. Build Flow
 
 ![Build Flow Chart](images/BuildFlowChart.png)
 
-```
+```text
 make all
 
 1. Build Docker image (sonic-redfish-builder:latest)
@@ -125,55 +158,70 @@ make all
    - Plus .changes, .buildinfo, .dsc files
 ```
 
-### Automatic Dependencies
+### 3.2. Automatic Dependencies
 
 The build system automatically handles dependencies:
 
-- **`build-bmcweb`**: Automatically runs `clean` → `setup-bmcweb` → `apply-patches` → build
-- **`build-bridge`**: Automatically runs `clean` → build
+- **`build-bmcweb`**: Automatically runs `clean` -> `setup-bmcweb` -> `apply-patches` -> build
+- **`build-bridge`**: Automatically runs `clean` -> build
 
 This ensures a clean, reproducible build every time.
 
-## Patch Management
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
 
-Patches are located in `patches/` directory:
+---
+
+## 4. Patch Management
+
+Patches are located in the `patches/` directory:
 - `patches/series` - Defines patch order (lines starting with `#` are comments)
 - `patches/*.patch` - Individual patch files
 
 Current patches:
 1. `0001-Integrating-bmcweb-with-SONiC-s-build-system.patch` - Adds Debian packaging
 
-
 To add a new patch:
-1. Make changes in bmcweb source directory
-2. Generate patch: `cd bmcweb && git format-patch -1 HEAD`
-3. Move patch to `patches/` directory
-4. Add patch filename to `patches/series`
+1. Make changes in bmcweb source directory.
+2. Generate patch: `cd bmcweb && git format-patch -1 HEAD`.
+3. Move patch to `patches/` directory.
+4. Add patch filename to `patches/series`.
 
-## Cleanup Targets
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
 
-### `clean` - Remove build artifacts, reset source
+---
+
+## 5. Cleanup Targets
+
+### 5.1. `clean` - Remove build artifacts, reset source
+
 - Removes: `obj-*`, `debian/`, `.deb` files, subproject builds
 - Resets: bmcweb source to clean git state (so patches can be reapplied)
 - Keeps: Docker images, target directory
 - Use when: You want to rebuild from scratch
 
-### `reset` - Complete cleanup
+### 5.2. `reset` - Complete cleanup
+
 - Does everything `clean` does, plus:
 - Removes: Docker images, target directory
 - Resets: bmcweb to base commit with `git clean -fdx`
 - Use when: You want to start completely fresh
 
-## Dependency Management
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
+
+---
+
+## 6. Dependency Management
 
 Dependencies are managed via **Meson wrap files** (`.wrap`):
 
-### bmcweb dependencies:
+### 6.1. bmcweb dependencies
+
 - `bmcweb/subprojects/sdbusplus.wrap` - D-Bus C++ bindings
 - `bmcweb/subprojects/stdexec.wrap` - C++23 executors
 - Plus other dependencies defined in bmcweb upstream
 
-### sonic-dbus-bridge dependencies:
+### 6.2. sonic-dbus-bridge dependencies
+
 - `sonic-dbus-bridge/subprojects/sdbusplus.wrap` - D-Bus C++ bindings
 - `sonic-dbus-bridge/subprojects/stdexec.wrap` - C++23 executors
 
@@ -181,9 +229,14 @@ Meson automatically downloads and builds these dependencies during the build pro
 
 The Debian packages can be installed in SONiC images.
 
-## Components
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
 
-### bmcweb
+---
+
+## 7. Components
+
+### 7.1. bmcweb
+
 - **Source**: https://github.com/openbmc/bmcweb
 - **Base commit**: 6926d430 (configurable via `BMCWEB_HEAD_COMMIT`)
 - **License**: Apache-2.0
@@ -192,7 +245,8 @@ The Debian packages can be installed in SONiC images.
 - **Output**: `bmcweb_1.0.0_arm64.deb`, `bmcweb-dbg_1.0.0_arm64.deb`
 - **Auto-clone**: Automatically cloned from GitHub if not present
 
-### sonic-dbus-bridge
+### 7.2. sonic-dbus-bridge
+
 - **License**: Apache-2.0
 - **Purpose**: Bridge SONiC Redis database to D-Bus for bmcweb integration
 - **Features**:
@@ -205,9 +259,13 @@ The Debian packages can be installed in SONiC images.
 - **Output**: `sonic-dbus-bridge_1.0.0_arm64.deb`, `sonic-dbus-bridge-dbgsym_1.0.0_arm64.deb`
 - **Configuration**: `config/config.yaml` for Redis, D-Bus, and platform settings
 
-## Configuration
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
 
-### sonic-dbus-bridge Configuration
+---
+
+## 8. Configuration
+
+### 8.1. sonic-dbus-bridge configuration
 
 The bridge is configured via `sonic-dbus-bridge/config/config.yaml`:
 
@@ -217,9 +275,10 @@ The bridge is configured via `sonic-dbus-bridge/config/config.yaml`:
 - **Update behavior**: Polling intervals and pub/sub settings
 - **Logging**: Log levels and output configuration
 
-### D-Bus Configuration Files
+### 8.2. D-Bus configuration files
 
 D-Bus security policies are defined in `sonic-dbus-bridge/dbus/`:
+
 - `xyz.openbmc_project.Inventory.Manager.conf` - Inventory management
 - `xyz.openbmc_project.ObjectMapper.conf` - Object mapper service
 - `xyz.openbmc_project.State.Host.conf` - Host state management
@@ -228,13 +287,74 @@ D-Bus security policies are defined in `sonic-dbus-bridge/dbus/`:
 
 These files are installed to `/etc/dbus-1/system.d/` during package installation.
 
-## Redfish API Endpoints
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
+
+---
+
+## 9. OEM Extension
+
+A SONiC-specific OEM extension is exposed under
+`Manager.Oem.SONiC.RackManager` and provides two POST actions
+(`SubmitAlert`, `SubmitTelemetry`) that a rack-manager device uses to
+push structured alerts and periodic telemetry into the BMC. bmcweb
+validates and forwards the JSON body verbatim over D-Bus to
+`sonic-dbus-bridge`, which persists it as `HSET` rows in Redis STATE_DB.
+
+The full contract - body envelopes, JSON schemas, per-action request
+/ response / Redis state, and error responses - lives in:
+
+- **[oem-extension/README.md](oem-extension/README.md)** - OEM contract,
+  schema bindings, and worked POST examples.
+
+Source layout:
+
+- `oem-extension/sonic/` - bmcweb-side route handlers
+  (`sonic_submit_alert.hpp`, `sonic_submit_telemetry.hpp`,
+  `sonic_rack_manager.hpp`, `sonic_oem_redfish.hpp`).
+- `oem-extension/schema/json-schema/` - authoritative
+  `SonicManager.v1_0_0.json` schema (and its unversioned alias).
+
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
+
+---
+
+## 10. Testing
+
+Two independent test suites live under [`tests/`](tests/):
+
+| Suite                                      | Type                  | Runner            |
+|--------------------------------------------|-----------------------|-------------------|
+| [`tests/redfish-api/`](tests/redfish-api/) | pytest integration    | `make test`       |
+| [`tests/unit-tests/`](tests/unit-tests/)   | C++ gtest unit tests  | `make unit-test`  |
+
+The integration suite spins up the whole Redfish stack
+(dbus-daemon -> redis -> sonic-dbus-bridge -> bmcweb) inside a Docker
+container and hits the live HTTPS API on `https://localhost:443`. The
+unit suite covers pure-logic C++ classes in `sonic-dbus-bridge/` with
+no Redis, no D-Bus, and no network.
+
+Quick start:
+
+```bash
+make test          # full integration suite (builds the test image first)
+make unit-test     # C++ unit tests in the builder image
+```
+
+See **[tests/README.md](tests/README.md)** for the JSON case schema,
+fixtures, debugging recipes (`NODELETE=1`), and the guide for adding a
+new test case.
+
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
+
+---
+
+## 11. Redfish API Endpoints
 
 Below are the currently supported Redfish API endpoints and their sample responses.
 
-### FirmwareInventory Collection
+### 11.1. FirmwareInventory Collection
 
-```
+```http
 GET /redfish/v1/UpdateService/FirmwareInventory
 ```
 
@@ -258,9 +378,9 @@ GET /redfish/v1/UpdateService/FirmwareInventory
 }
 ```
 
-### FirmwareInventory - BIOS
+### 11.2. FirmwareInventory - BIOS
 
-```
+```http
 GET /redfish/v1/UpdateService/FirmwareInventory/bios
 ```
 
@@ -281,9 +401,9 @@ GET /redfish/v1/UpdateService/FirmwareInventory/bios
 }
 ```
 
-### FirmwareInventory - BMC Firmware
+### 11.3. FirmwareInventory - BMC Firmware
 
-```
+```http
 GET /redfish/v1/UpdateService/FirmwareInventory/bmc
 ```
 
@@ -310,9 +430,9 @@ GET /redfish/v1/UpdateService/FirmwareInventory/bmc
 }
 ```
 
-### FirmwareInventory - Switch
+### 11.4. FirmwareInventory - Switch
 
-```
+```http
 GET /redfish/v1/UpdateService/FirmwareInventory/switch
 ```
 
@@ -339,9 +459,9 @@ GET /redfish/v1/UpdateService/FirmwareInventory/switch
 }
 ```
 
-### Service Root
+### 11.5. Service Root
 
-```
+```http
 GET /redfish/v1/
 ```
 
@@ -420,9 +540,9 @@ GET /redfish/v1/
 }
 ```
 
-### ComputerSystem.Reset - Power On
+### 11.6. ComputerSystem.Reset - Power On
 
-```
+```http
 POST /redfish/v1/Systems/system/Actions/ComputerSystem.Reset
 Content-Type: application/json
 
@@ -432,7 +552,7 @@ Content-Type: application/json
 This action publishes a `RACK_MANAGER_COMMAND` row to STATE_DB which
 `sonic-bmcctld` (sonic-platform-daemons) consumes:
 
-```
+```text
 root@sonic:/home/admin# redis-cli -n 6 KEYS 'RACK_MANAGER_COMMAND|*'
 1) "RACK_MANAGER_COMMAND|CMD_1775040896_000001"
 
@@ -447,9 +567,9 @@ root@sonic:/home/admin# redis-cli -n 6 HGETALL 'RACK_MANAGER_COMMAND|CMD_1775040
 8) "2026-05-08T12:34:56.157648Z"
 ```
 
-### ComputerSystem.Reset - Graceful Shutdown
+### 11.7. ComputerSystem.Reset - Graceful Shutdown
 
-```
+```http
 POST /redfish/v1/Systems/system/Actions/ComputerSystem.Reset
 Content-Type: application/json
 
@@ -458,7 +578,7 @@ Content-Type: application/json
 
 Redis STATE_DB after the request:
 
-```
+```text
 root@sonic:/home/admin# redis-cli -n 6 HGETALL 'RACK_MANAGER_COMMAND|CMD_1775041067_000002'
 1) "command"
 2) "POWER_OFF"
@@ -470,9 +590,9 @@ root@sonic:/home/admin# redis-cli -n 6 HGETALL 'RACK_MANAGER_COMMAND|CMD_1775041
 8) "2026-05-08T12:37:47.766120Z"
 ```
 
-### ComputerSystem.Reset - Power Cycle
+### 11.8. ComputerSystem.Reset - Power Cycle
 
-```
+```http
 POST /redfish/v1/Systems/system/Actions/ComputerSystem.Reset
 Content-Type: application/json
 
@@ -481,7 +601,7 @@ Content-Type: application/json
 
 Redis STATE_DB after the request:
 
-```
+```text
 root@sonic:/home/admin# redis-cli -n 6 HGETALL 'RACK_MANAGER_COMMAND|CMD_1775041121_000003'
 1) "command"
 2) "POWER_CYCLE"
@@ -499,21 +619,14 @@ failure (e.g. `CRITICAL_LEAK_PRESENT`). Authoritative host power state
 is published by the daemon to `HOST_STATE|switch-host`
 (`device_power_state`, `device_status`, `last_change_timestamp`).
 
-## Troubleshooting
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
 
-### Build fails with "debian/changelog: No such file or directory"
-Run `make reset` to completely clean the workspace, then rebuild.
+---
 
-### Permission denied when cleaning
-The build creates root-owned files inside Docker. The Makefile uses `sudo rm` to clean them.
-Make sure you have sudo access.
+## 12. License
 
-### Docker image build fails
-Check your internet connection - the build downloads packages from Debian repositories.
 
-### Meson subproject download fails
-Check internet connection and firewall settings. Meson needs to access GitHub to download dependencies.
-
-## License
 
 Apache-2.0
+
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
