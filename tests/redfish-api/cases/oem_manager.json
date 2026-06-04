@@ -86,6 +86,60 @@
     }
   },
   {
+    "name": "test_bmc_manager_standard_redfish_fields",
+    "description": "Validates the BMC Manager resource exposes standard Redfish Manager identity fields",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc",
+    "expected_status": 200,
+    "expected_response": {
+      "@odata.id": "/redfish/v1/Managers/bmc",
+      "Id": "bmc"
+    },
+    "validators": [
+      {
+        "type": "exists",
+        "path": "@odata.type"
+      },
+      {
+        "type": "exists",
+        "path": "Name"
+      },
+      {
+        "type": "exists",
+        "path": "ManagerType"
+      }
+    ]
+  },
+  {
+    "name": "test_rack_manager_sub_resource_returns_200",
+    "description": "Validates the SONiC RackManager OEM sub-resource endpoint is directly reachable",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager",
+    "expected_status": 200
+  },
+  {
+    "name": "test_rack_manager_sub_resource_fields",
+    "description": "Validates the SONiC RackManager OEM sub-resource exposes all expected identity, description, and action fields",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager",
+    "expected_status": 200,
+    "expected_response": {
+      "@odata.type": "#SonicManager.v1_0_0.RackManager",
+      "@odata.id": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager",
+      "Id": "RackManager",
+      "Name": "SONiC Rack Manager Interface",
+      "Description": "OEM interface for rack manager to communicate with switch BMC",
+      "Actions": {
+        "#SONiC.SubmitAlert": {
+          "target": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert"
+        },
+        "#SONiC.SubmitTelemetry": {
+          "target": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry"
+        }
+      }
+    }
+  },
+  {
     "name": "test_submit_alert_unauthenticated_returns_401",
     "description": "Validates SubmitAlert rejects unauthenticated POSTs",
     "method": "POST",
@@ -173,14 +227,15 @@
   },
   {
     "name": "test_json_schemas_collection_lists_sonic_manager",
-    "description": "Validates the JsonSchemas collection exposes the SonicManager OEM schema entry",
+    "description": "Validates the JsonSchemas collection Members array contains the SonicManager OEM schema entry",
     "method": "GET",
     "endpoint": "/redfish/v1/JsonSchemas",
     "expected_status": 200,
     "validators": [
       {
-        "type": "exists",
-        "path": "Members"
+        "type": "contains_member",
+        "path": "Members",
+        "value": "/redfish/v1/JsonSchemas/SonicManager"
       }
     ]
   },
@@ -194,6 +249,19 @@
       {
         "type": "exists",
         "path": "Location"
+      }
+    ]
+  },
+  {
+    "name": "test_sonic_manager_versioned_schema_file_fetchable",
+    "description": "Validates the versioned SonicManager v1_0_0 JSON schema file is directly served by bmcweb",
+    "method": "GET",
+    "endpoint": "/redfish/v1/JsonSchemas/SonicManager/SonicManager.v1_0_0.json",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "exists",
+        "path": "definitions"
       }
     ]
   },

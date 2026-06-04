@@ -214,23 +214,25 @@ apply-patches: setup-bmcweb copy-oem-extension
 	fi
 
 	@cd $(BMCWEB_DIR) && \
-	if git diff --quiet 2>/dev/null; then \
-		echo "  Applying patches from $(PATCHES_DIR)/series..."; \
-		while IFS= read -r patch || [ -n "$$patch" ]; do \
-			patch=$$(echo "$$patch" | sed 's/#.*//;s/^[[:space:]]*//;s/[[:space:]]*$$//'); \
-			[ -z "$$patch" ] && continue; \
+	echo "  Applying patches from $(PATCHES_DIR)/series..."; \
+	while IFS= read -r patch || [ -n "$$patch" ]; do \
+		patch=$$(echo "$$patch" | sed 's/#.*//;s/^[[:space:]]*//;s/[[:space:]]*$$//'); \
+		[ -z "$$patch" ] && continue; \
+		if [ ! -f "$(PATCHES_DIR)/$$patch" ]; then \
+			echo "Error: Patch file not found: $$patch"; \
+			exit 1; \
+		fi; \
+		if git apply --reverse --check "$(PATCHES_DIR)/$$patch" >/dev/null 2>&1; then \
+			echo "  Already applied, skipping: $$patch"; \
+		elif git apply --check "$(PATCHES_DIR)/$$patch" >/dev/null 2>&1; then \
 			echo "  Applying: $$patch"; \
-			if [ -f "$(PATCHES_DIR)/$$patch" ]; then \
-				git apply "$(PATCHES_DIR)/$$patch" || { echo "Error applying $$patch"; exit 1; }; \
-			else \
-				echo "Error: Patch file not found: $$patch"; \
-				exit 1; \
-			fi; \
-		done < $(PATCHES_DIR)/series; \
-		echo "  All patches applied successfully"; \
-	else \
-		echo "  Patches already applied (bmcweb has local changes)"; \
-	fi
+			git apply "$(PATCHES_DIR)/$$patch" || { echo "Error applying $$patch"; exit 1; }; \
+		else \
+			echo "Error: $$patch neither applies cleanly nor is already applied (conflict or partial state)"; \
+			exit 1; \
+		fi; \
+	done < $(PATCHES_DIR)/series; \
+	echo "  All patches applied successfully"
 
 # Build bmcweb Debian package
 # Dependencies: clean → setup-bmcweb → copy-oem-extension → apply-patches → build-bmcweb

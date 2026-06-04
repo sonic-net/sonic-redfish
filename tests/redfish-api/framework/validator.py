@@ -117,7 +117,7 @@ def validate_test_file(filepath: Path) -> list[str]:
                         continue
                     if "type" not in val or "path" not in val:
                         errors.append(f"Case '{name}', Validator [{v_idx}]: Missing 'type' or 'path'.")
-                    elif val["type"] in ["equals", "not_equals", "equals_state", "length_gte"] and "value" not in val:
+                    elif val["type"] in ["equals", "not_equals", "equals_state", "length_gte", "contains_member"] and "value" not in val:
                         errors.append(f"Case '{name}', Validator [{v_idx}]: Type '{val['type']}' requires a 'value' field.")
                     
                     if val.get("type") == "equals_state" and "value" in val:

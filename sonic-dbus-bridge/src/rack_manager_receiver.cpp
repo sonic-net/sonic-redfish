@@ -108,66 +108,78 @@ RackManagerReceiver::~RackManagerReceiver()
 // Initialise: register D-Bus methods + start worker thread.
 // Redis is connected lazily on the worker so initialize() never blocks
 // the caller if the database is down at boot.
+// Returns false if D-Bus interface registration or worker thread startup
+// fails; the caller (BridgeApp) logs the error and continues without OEM
+// support.
 // ---------------------------------------------------------------------------
 bool RackManagerReceiver::initialize()
 {
-    iface_ = server_.add_interface(RACK_MANAGER_OBJ_PATH, RACK_MANAGER_IFACE);
+    try
+    {
+        iface_ = server_.add_interface(RACK_MANAGER_OBJ_PATH, RACK_MANAGER_IFACE);
 
-    iface_->register_method(
-        "SubmitAlert",
-        [this](const std::string& jsonStr) -> bool {
-            jobsReceived_.fetch_add(1, std::memory_order_relaxed);
-            LOG_INFO("RackManagerReceiver: SubmitAlert received (%zu bytes)",
-                     jsonStr.size());
-            Job j{&getAlertMappings(), {}};
-            if (!buildJob(jsonStr, *j.mappings, j))
-            {
-                return false;
-            }
-            std::lock_guard<std::mutex> lk(queueMutex_);
-            if (queue_.size() >= kMaxQueueDepth)
-            {
-                jobsDroppedQueueFull_.fetch_add(1, std::memory_order_relaxed);
-                LOG_WARNING("RackManagerReceiver: queue full (%zu); "
-                            "dropping SubmitAlert", queue_.size());
-                return false;
-            }
-            queue_.emplace_back(std::move(j));
-            queueCv_.notify_one();
-            return true;
-        });
+        iface_->register_method(
+            "SubmitAlert",
+            [this](const std::string& jsonStr) -> bool {
+                jobsReceived_.fetch_add(1, std::memory_order_relaxed);
+                LOG_INFO("RackManagerReceiver: SubmitAlert received (%zu bytes)",
+                         jsonStr.size());
+                Job j{&getAlertMappings(), {}};
+                if (!buildJob(jsonStr, *j.mappings, j))
+                {
+                    return false;
+                }
+                std::lock_guard<std::mutex> lk(queueMutex_);
+                if (queue_.size() >= kMaxQueueDepth)
+                {
+                    jobsDroppedQueueFull_.fetch_add(1, std::memory_order_relaxed);
+                    LOG_WARNING("RackManagerReceiver: queue full (%zu); "
+                                "dropping SubmitAlert", queue_.size());
+                    return false;
+                }
+                queue_.emplace_back(std::move(j));
+                queueCv_.notify_one();
+                return true;
+            });
 
-    iface_->register_method(
-        "SubmitTelemetry",
-        [this](const std::string& jsonStr) -> bool {
-            jobsReceived_.fetch_add(1, std::memory_order_relaxed);
-            LOG_INFO("RackManagerReceiver: SubmitTelemetry received (%zu bytes)",
-                     jsonStr.size());
-            Job j{&getTelemetryMappings(), {}};
-            if (!buildJob(jsonStr, *j.mappings, j))
-            {
-                return false;
-            }
-            std::lock_guard<std::mutex> lk(queueMutex_);
-            if (queue_.size() >= kMaxQueueDepth)
-            {
-                jobsDroppedQueueFull_.fetch_add(1, std::memory_order_relaxed);
-                LOG_WARNING("RackManagerReceiver: queue full (%zu); "
-                            "dropping SubmitTelemetry", queue_.size());
-                return false;
-            }
-            queue_.emplace_back(std::move(j));
-            queueCv_.notify_one();
-            return true;
-        });
+        iface_->register_method(
+            "SubmitTelemetry",
+            [this](const std::string& jsonStr) -> bool {
+                jobsReceived_.fetch_add(1, std::memory_order_relaxed);
+                LOG_INFO("RackManagerReceiver: SubmitTelemetry received (%zu bytes)",
+                         jsonStr.size());
+                Job j{&getTelemetryMappings(), {}};
+                if (!buildJob(jsonStr, *j.mappings, j))
+                {
+                    return false;
+                }
+                std::lock_guard<std::mutex> lk(queueMutex_);
+                if (queue_.size() >= kMaxQueueDepth)
+                {
+                    jobsDroppedQueueFull_.fetch_add(1, std::memory_order_relaxed);
+                    LOG_WARNING("RackManagerReceiver: queue full (%zu); "
+                                "dropping SubmitTelemetry", queue_.size());
+                    return false;
+                }
+                queue_.emplace_back(std::move(j));
+                queueCv_.notify_one();
+                return true;
+            });
 
-    iface_->initialize();
+        iface_->initialize();
 
-    worker_ = std::thread(&RackManagerReceiver::workerLoop, this);
+        worker_ = std::thread(&RackManagerReceiver::workerLoop, this);
 
-    LOG_INFO("RackManagerReceiver: D-Bus interface registered at %s",
-             RACK_MANAGER_OBJ_PATH);
-    return true;
+        LOG_INFO("RackManagerReceiver: D-Bus interface registered at %s",
+                 RACK_MANAGER_OBJ_PATH);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR("RackManagerReceiver: initialization failed: %s", e.what());
+        iface_.reset();
+        return false;
+    }
 }
 
 // ---------------------------------------------------------------------------

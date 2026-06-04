@@ -88,5 +88,13 @@ def run_validators(validators, actual, state):
         elif v_type == "equals_state":
             expected_state = state.get(expected_val)
             assert extracted == expected_state, f"Validator failed: '{path}' does not match state '{expected_val}'"
+        elif v_type == "contains_member":
+            # Checks that at least one item in the list at `path` has a
+            # sub-field (default "@odata.id") equal to `value`.
+            assert isinstance(extracted, list), \
+                f"Validator failed: '{path}' is not a list (got {type(extracted).__name__})"
+            member_path = val.get("member_path", "@odata.id")
+            assert any(extract_path(item, member_path) == expected_val for item in extracted), \
+                f"Validator failed: No item in '{path}' has '{member_path}' == '{expected_val}'"
         else:
             raise ValueError(f"Unknown validator type: {v_type}")

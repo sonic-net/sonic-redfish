@@ -132,7 +132,8 @@ class RackManagerReceiver
 
     /**
      * @brief Parse JSON + walk the mapping table, build a Job.
-     * @return std::nullopt on parse failure (caller returns false to D-Bus)
+     * @return true on success; false on JSON parse failure (the D-Bus method
+     *         handler returns false to the D-Bus caller to signal rejection)
      */
     bool buildJob(const std::string& jsonStr,
                   const std::vector<FieldMapping>& mappings, Job& out);

@@ -16,6 +16,8 @@ resource, plus the JSON schemas that document the OEM contract.
    2. [SubmitAlert - ShutdownAlert wrapped form](#42-submitalert---shutdownalert-wrapped-form)
    3. [SubmitTelemetry](#43-submittelemetry)
 5. [Error responses](#5-error-responses)
+6. [Design decisions](#6-design-decisions)
+   1. [Why a JSON blob over D-Bus instead of typed arguments](#61-why-a-json-blob-over-d-bus-instead-of-typed-arguments)
 
 ---
 
@@ -337,5 +339,34 @@ HTTP/1.1 400 Bad Request
   ]
 }
 ```
+
+<sub>[^ Back to Table of Contents](#table-of-contents)</sub>
+
+---
+
+## 6. Design decisions
+
+### 6.1. Why a JSON blob over D-Bus instead of typed arguments
+
+The HTTP body is forwarded verbatim, as a JSON string, over a single D-Bus
+method on the well-known name `com.sonic.RackManager`. Alternatives were
+considered:
+
+- **Per-field D-Bus arguments** — would require regenerating the interface
+  whenever the rack-manager contract grew a field, coupling the bridge's
+  release cadence to the rack-manager's.
+- **sd-bus signals** — fire-and-forget, no per-call ack, harder to surface a
+  5xx back to the rack manager when Redis is down.
+
+The JSON-blob approach:
+- Keeps the D-Bus interface stable across schema growth.
+- Preserves field-level evolvability (additional alarm types just appear in the
+  blob, the bridge's `field_mapping` table grows alongside).
+- Gives a natural unit of work for the bridge's worker thread:
+  parse → resolve JSON paths → pipelined HSET to STATE\_DB.
+
+The trade-off is that field-level type checking moves from D-Bus into the
+bridge (handled by `field_mapping.hpp`), and JSON parse cost is paid on the
+bridge side; both are acceptable at the expected request rate.
 
 <sub>[^ Back to Table of Contents](#table-of-contents)</sub>

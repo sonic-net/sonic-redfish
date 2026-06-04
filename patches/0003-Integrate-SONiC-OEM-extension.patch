@@ -32,14 +32,14 @@ diff --git a/redfish-core/src/redfish.cpp b/redfish-core/src/redfish.cpp
 index abcdef2..1234568 100644
 --- a/redfish-core/src/redfish.cpp
 +++ b/redfish-core/src/redfish.cpp
-@@ -36,6 +36,7 @@
- #include "openbmc/openbmc_managers.hpp"
- #include "pcie.hpp"
- #include "power.hpp"
+@@ -45,6 +45,7 @@
+ #include "roles.hpp"
+ #include "sensors.hpp"
+ #include "service_root.hpp"
 +#include "sonic/sonic_oem_redfish.hpp"
- #include "power_subsystem.hpp"
- #include "power_supply.hpp"
- #include "processor.hpp"
+ #include "storage.hpp"
+ #include "storage_chassis.hpp"
+ #include "storage_controller.hpp"
 @@ -249,6 +250,8 @@ RedfishService::RedfishService(App& app)
  
      requestRoutesOpenBmcManager(*this);

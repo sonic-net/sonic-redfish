@@ -106,7 +106,9 @@ bool BridgeApp::initialize()
     }
     else
     {
-        LOG_WARNING("Rack Manager Receiver failed to initialize");
+        LOG_ERROR("Rack Manager Receiver failed to initialize. "
+                  "SONiC OEM extension unavailable");
+        LOG_WARNING("Other bridge services will continue normally");
     }
 
     // Initialize user management (non-fatal if it fails)

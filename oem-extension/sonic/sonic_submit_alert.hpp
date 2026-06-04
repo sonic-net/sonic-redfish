@@ -9,18 +9,10 @@
 
 #pragma once
 
-#include "app.hpp"
-#include "async_resp.hpp"
 #include "dbus_singleton.hpp"
-#include "error_messages.hpp"
-#include "http_request.hpp"
-#include "logging.hpp"
-#include "query.hpp"
-#include "registries/privilege_registry.hpp"
-#include "sonic/sonic_oem_constants.hpp"
+#include "sonic/sonic_oem_utils.hpp"
 
 #include <boost/beast/http/status.hpp>
-#include <nlohmann/json.hpp>
 
 #include <memory>
 #include <string>
@@ -59,47 +51,24 @@ inline void handleSonicSubmitAlert(
     const std::shared_ptr<bmcweb::AsyncResp>& asyncResp,
     const std::string& managerId)
 {
-    if (!redfish::setUpRedfishRoute(app, req, asyncResp))
+    // Common pre-flight: auth, manager ID, body size, JSON parse.
+    auto reqJson =
+        sonicOemValidateRequest(app, req, asyncResp, managerId, "SubmitAlert");
+    if (!reqJson)
     {
-        return;
-    }
-
-    if (managerId != BMCWEB_REDFISH_MANAGER_URI_NAME)
-    {
-        messages::resourceNotFound(asyncResp->res, "Manager", managerId);
-        return;
-    }
-
-    // Reject oversized payloads before parsing
-    if (req.body().size() > sonic_oem::kMaxRequestBodyBytes)
-    {
-        BMCWEB_LOG_WARNING(
-            "SONiC.SubmitAlert: rejected body of {} bytes (cap {})",
-            req.body().size(), sonic_oem::kMaxRequestBodyBytes);
-        asyncResp->res.result(
-            boost::beast::http::status::payload_too_large);
-        return;
-    }
-
-    // Validate that the body is valid JSON
-    nlohmann::json reqJson =
-        nlohmann::json::parse(req.body(), nullptr, false);
-    if (reqJson.is_discarded())
-    {
-        messages::malformedJSON(asyncResp->res);
         return;
     }
 
     // Require the top-level key.  The rack-manager firmware wraps every
     // alert payload (flat or ShutdownAlert form) under "Redfish"; the
     // bridge's field_mapping paths assume that envelope.
-    if (!reqJson.contains("Redfish"))
+    if (!reqJson->contains("Redfish"))
     {
         messages::propertyMissing(asyncResp->res, "Redfish");
         return;
     }
 
-    std::string jsonStr = reqJson.dump();
+    std::string jsonStr = reqJson->dump();
 
     BMCWEB_LOG_INFO("SONiC.SubmitAlert: forwarding {} bytes to D-Bus",
                     jsonStr.size());
