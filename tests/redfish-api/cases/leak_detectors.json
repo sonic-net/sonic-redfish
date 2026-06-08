@@ -1,0 +1,264 @@
+[
+  {
+    "name": "test_leak_detectors_collection_bmc_not_found",
+    "description": "BMC is a Manager not a Chassis: requesting the LeakDetectors collection under it returns Base.ResourceNotFound for the Chassis segment",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Chassis/BMC/ThermalSubsystem/LeakDetection/LeakDetectors",
+    "expected_status": 404,
+    "expected_response": {
+      "error": {
+        "code": "Base.1.19.ResourceNotFound",
+        "@Message.ExtendedInfo": [
+          {
+            "MessageId": "Base.1.19.ResourceNotFound",
+            "MessageArgs": ["Chassis", "BMC"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "test_leak_detector_member_bmc_not_found",
+    "description": "BMC is a Manager not a Chassis: requesting an individual LeakDetector under it returns Base.ResourceNotFound for the Chassis segment",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Chassis/BMC/ThermalSubsystem/LeakDetection/LeakDetectors/LeakDetector1",
+    "expected_status": 404,
+    "expected_response": {
+      "error": {
+        "code": "Base.1.19.ResourceNotFound",
+        "@Message.ExtendedInfo": [
+          {
+            "MessageId": "Base.1.19.ResourceNotFound",
+            "MessageArgs": ["Chassis", "BMC"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "test_chassis_lists_thermalsubsystem_link",
+    "description": "Contract: chassis must advertise ThermalSubsystem so clients can reach LeakDetection",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}",
+    "expected_status": 200,
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": { "CHASSIS_URI": "Members[0].@odata.id" }
+      }
+    ],
+    "validators": [
+      { "type": "exists", "path": "ThermalSubsystem.@odata.id" }
+    ]
+  },
+  {
+    "name": "test_leak_detection_resource_shape",
+    "description": "Contract: ThermalSubsystem/LeakDetection groups detectors and reports aggregate Status",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}/ThermalSubsystem/LeakDetection",
+    "expected_status": 200,
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": { "CHASSIS_URI": "Members[0].@odata.id" }
+      }
+    ],
+    "expected_response": {
+      "Id": "LeakDetection",
+      "Name": "Leak Detection"
+    },
+    "validators": [
+      { "type": "exists", "path": "@odata.type" },
+      { "type": "exists", "path": "LeakDetectors.@odata.id" },
+      { "type": "exists", "path": "Status.State" },
+      { "type": "exists", "path": "Status.Health" }
+    ]
+  },
+  {
+    "name": "test_leak_detectors_collection_shape",
+    "description": "Contract: LeakDetectorCollection envelope with Members[] and Members@odata.count",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}/ThermalSubsystem/LeakDetection/LeakDetectors",
+    "expected_status": 200,
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": { "CHASSIS_URI": "Members[0].@odata.id" }
+      }
+    ],
+    "expected_response": {
+      "@odata.type": "#LeakDetectorCollection.LeakDetectorCollection",
+      "Name": "Leak Detector Collection"
+    },
+    "validators": [
+      { "type": "exists",     "path": "Members" },
+      { "type": "length_gte", "path": "Members", "value": 1 },
+      { "type": "exists",     "path": "Members@odata.count" }
+    ]
+  },
+  {
+    "name": "test_leak_detector_member_shape_and_state",
+    "description": "Contract: a LeakDetector member exposes DetectorState, PhysicalContext, and Status",
+    "method": "GET",
+    "endpoint": "{{STATE.LEAK_DETECTOR_URI}}",
+    "expected_status": 200,
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": { "CHASSIS_URI": "Members[0].@odata.id" }
+      },
+      {
+        "endpoint": "{{STATE.CHASSIS_URI}}/ThermalSubsystem/LeakDetection/LeakDetectors",
+        "extract": { "LEAK_DETECTOR_URI": "Members[0].@odata.id" }
+      }
+    ],
+    "validators": [
+      { "type": "exists",     "path": "@odata.id" },
+      { "type": "exists",     "path": "@odata.type" },
+      { "type": "exists",     "path": "Id" },
+      { "type": "exists",     "path": "Name" },
+      { "type": "exists",     "path": "DetectorState" },
+      { "type": "exists",     "path": "LeakDetectorType" },
+      { "type": "exists",     "path": "PhysicalContext" },
+      { "type": "exists",     "path": "Status.State" },
+      { "type": "exists",     "path": "Status.Health" },
+      { "type": "not_equals", "path": "DetectorState", "value": "LeakDetected" }
+    ]
+  },
+  {
+    "name": "test_leak_detector_unknown_id_returns_404",
+    "description": "Contract: GET on an unknown LeakDetector Id returns Redfish ResourceNotFound",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}/ThermalSubsystem/LeakDetection/LeakDetectors/DoesNotExist",
+    "expected_status": 404,
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": { "CHASSIS_URI": "Members[0].@odata.id" }
+      }
+    ],
+    "expected_response": {
+      "error": {
+        "code": "Base.1.19.ResourceNotFound",
+        "@Message.ExtendedInfo": [
+          {
+            "MessageId": "Base.1.19.ResourceNotFound",
+            "MessageArgs": ["LeakDetector", "DoesNotExist"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "test_leak_detectors_canonical_collection_shape",
+    "description": "Canonical DMTF URI (LeakDetection v1.2.0 / Chassis v1.26.0+): /Chassis/<id>/LeakDetectors returns LeakDetectorCollection",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}/LeakDetectors",
+    "expected_status": 200,
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": { "CHASSIS_URI": "Members[0].@odata.id" }
+      }
+    ],
+    "expected_response": {
+      "@odata.type": "#LeakDetectorCollection.LeakDetectorCollection",
+      "Name": "Leak Detector Collection"
+    },
+    "validators": [
+      { "type": "exists",     "path": "Members" },
+      { "type": "length_gte", "path": "Members", "value": 1 },
+      { "type": "exists",     "path": "Members@odata.count" }
+    ]
+  },
+  {
+    "name": "test_leak_detectors_canonical_collection_self_link",
+    "description": "Canonical collection emits its own URI in @odata.id (not the deprecated nested form) and its member links also use the canonical URI",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}/LeakDetectors",
+    "expected_status": 200,
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": { "CHASSIS_URI": "Members[0].@odata.id" }
+      }
+    ],
+    "validators": [
+      { "type": "contains",     "path": "@odata.id",             "value": "/LeakDetectors" },
+      { "type": "not_contains", "path": "@odata.id",             "value": "/ThermalSubsystem/" },
+      { "type": "contains",     "path": "Members[0].@odata.id",  "value": "/LeakDetectors/" },
+      { "type": "not_contains", "path": "Members[0].@odata.id",  "value": "/ThermalSubsystem/" }
+    ]
+  },
+  {
+    "name": "test_leak_detectors_canonical_member_shape",
+    "description": "Canonical DMTF URI: /Chassis/<id>/LeakDetectors/<id> returns LeakDetector member with full DMTF shape",
+    "method": "GET",
+    "endpoint": "{{STATE.LEAK_DETECTOR_URI}}",
+    "expected_status": 200,
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": { "CHASSIS_URI": "Members[0].@odata.id" }
+      },
+      {
+        "endpoint": "{{STATE.CHASSIS_URI}}/LeakDetectors",
+        "extract": { "LEAK_DETECTOR_URI": "Members[0].@odata.id" }
+      }
+    ],
+    "validators": [
+      { "type": "exists",     "path": "@odata.id" },
+      { "type": "exists",     "path": "@odata.type" },
+      { "type": "exists",     "path": "Id" },
+      { "type": "exists",     "path": "Name" },
+      { "type": "exists",     "path": "DetectorState" },
+      { "type": "exists",     "path": "LeakDetectorType" },
+      { "type": "exists",     "path": "PhysicalContext" },
+      { "type": "exists",     "path": "Status.State" },
+      { "type": "exists",     "path": "Status.Health" },
+      { "type": "not_equals", "path": "DetectorState", "value": "LeakDetected" }
+    ]
+  },
+  {
+    "name": "test_leak_detectors_canonical_unknown_chassis_returns_404",
+    "description": "Canonical URI under an unknown chassis returns Base.ResourceNotFound for the Chassis segment",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Chassis/BMC/LeakDetectors",
+    "expected_status": 404,
+    "expected_response": {
+      "error": {
+        "code": "Base.1.19.ResourceNotFound",
+        "@Message.ExtendedInfo": [
+          {
+            "MessageId": "Base.1.19.ResourceNotFound",
+            "MessageArgs": ["Chassis", "BMC"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "test_leak_detectors_canonical_unknown_member_returns_404",
+    "description": "Canonical URI: GET on an unknown LeakDetector Id returns Redfish ResourceNotFound",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}/LeakDetectors/DoesNotExist",
+    "expected_status": 404,
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": { "CHASSIS_URI": "Members[0].@odata.id" }
+      }
+    ],
+    "expected_response": {
+      "error": {
+        "code": "Base.1.19.ResourceNotFound",
+        "@Message.ExtendedInfo": [
+          {
+            "MessageId": "Base.1.19.ResourceNotFound",
+            "MessageArgs": ["LeakDetector", "DoesNotExist"]
+          }
+        ]
+      }
+    }
+  }
+]

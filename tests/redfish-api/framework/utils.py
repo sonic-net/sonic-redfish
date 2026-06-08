@@ -15,7 +15,7 @@ def extract_path(data, path):
     """Simple JSONPath-like extractor. E.g., 'Members[0].@odata.id'"""
     if path == "$" or not path:
         return data
-    keys = re.findall(r"@odata\.id|@odata\.type|[\w]+|\[\d+\]", path)
+    keys = re.findall(r"\w+@odata\.\w+|@odata\.\w+|[\w]+|\[\d+\]", path)
     current = data
     for k in keys:
         if k.startswith("[") and k.endswith("]"):
@@ -88,5 +88,15 @@ def run_validators(validators, actual, state):
         elif v_type == "equals_state":
             expected_state = state.get(expected_val)
             assert extracted == expected_state, f"Validator failed: '{path}' does not match state '{expected_val}'"
+        elif v_type == "contains":
+            assert isinstance(extracted, str), \
+                f"Validator failed: '{path}' is not a string (got {type(extracted).__name__})"
+            assert expected_val in extracted, \
+                f"Validator failed: '{path}' ('{extracted}') does not contain '{expected_val}'"
+        elif v_type == "not_contains":
+            assert isinstance(extracted, str), \
+                f"Validator failed: '{path}' is not a string (got {type(extracted).__name__})"
+            assert expected_val not in extracted, \
+                f"Validator failed: '{path}' ('{extracted}') unexpectedly contains '{expected_val}'"
         else:
             raise ValueError(f"Unknown validator type: {v_type}")
