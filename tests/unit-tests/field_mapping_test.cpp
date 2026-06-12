@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include "field_mapping.hpp"
 
+#include <regex>
 #include <set>
 #include <string>
 #include <utility>
@@ -20,11 +21,8 @@ namespace sonic::dbus_bridge::test {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// All Redis keys for telemetry must live under this prefix (single hash).
-constexpr const char* TELEMETRY_REDIS_KEY_PREFIX = "RSCM_TELEMETRY|";
-
-// Alert keys are split per alert kind: RSCM_ALERT|<AlertName>.
-constexpr const char* ALERT_REDIS_KEY_PREFIX = "RSCM_ALERT|";
+// All telemetry matches flatten into this single Redis hash key.
+constexpr const char* TELEMETRY_REDIS_KEY = "RSCM_TELEMETRY|alarms";
 
 static bool isValidFieldType(FieldType t)
 {
@@ -45,54 +43,78 @@ static bool isValidFieldType(FieldType t)
 
 TEST(FieldMappingTables, ReturnSameStaticInstanceAcrossCalls)
 {
-    EXPECT_EQ(&getTelemetryMappings(), &getTelemetryMappings());
-    EXPECT_EQ(&getAlertMappings(), &getAlertMappings());
+    EXPECT_EQ(&getTelemetryRules(), &getTelemetryRules());
+    EXPECT_EQ(&getAlertRules(), &getAlertRules());
 }
 
 TEST(FieldMappingTables, BothTablesAreNonEmpty)
 {
-    EXPECT_FALSE(getTelemetryMappings().empty());
-    EXPECT_FALSE(getAlertMappings().empty());
+    EXPECT_FALSE(getTelemetryRules().empty());
+    EXPECT_FALSE(getAlertRules().empty());
 }
 
 // ---------------------------------------------------------------------------
 // Entry-level invariants (apply to every row in every table)
 // ---------------------------------------------------------------------------
 
-static void checkPathSyntax(const std::string& path, const std::string& ctx,
-                            const std::string& which)
-{
-    EXPECT_EQ(path.find(' '), std::string::npos)
-        << ctx << ": " << which << " contains a space: '" << path << "'";
-    EXPECT_NE(path.front(), '.') << ctx << ": " << which << " starts with '.'";
-    EXPECT_NE(path.back(),  '.') << ctx << ": " << which << " ends with '.'";
-}
-
-static void checkEntryInvariants(const FieldMapping& m, const std::string& ctx)
-{
-    EXPECT_FALSE(m.jsonPath.empty())   << ctx << ": jsonPath is empty";
-    EXPECT_FALSE(m.redisKey.empty())   << ctx << ": redisKey is empty";
-    EXPECT_FALSE(m.redisField.empty()) << ctx << ": redisField is empty";
-
-    // JSON paths use dot notation; spaces or leading/trailing dots are bugs.
-    checkPathSyntax(m.jsonPath, ctx, "jsonPath");
-
-    EXPECT_TRUE(isValidFieldType(m.type)) << ctx << ": invalid FieldType";
-}
-
+// Every telemetry rule must carry a non-empty pattern + flattened field, a
+// compilable regex, a space/pipe-free Redis field, and a valid value type.
 TEST(FieldMappingTables, TelemetryEntriesSatisfyInvariants)
 {
-    for (const auto& m : getTelemetryMappings())
+    for (const auto& r : getTelemetryRules())
     {
-        checkEntryInvariants(m, "telemetry[" + m.jsonPath + "]");
+        const std::string ctx = "telemetry[" + r.redisField + "]";
+        EXPECT_FALSE(r.pathPattern.empty()) << ctx << ": empty pathPattern";
+        EXPECT_FALSE(r.redisField.empty())  << ctx << ": empty redisField";
+
+        // redisField becomes a hash field in TELEMETRY_KEY; spaces/pipes
+        // would corrupt the flattened hash.
+        EXPECT_EQ(r.redisField.find(' '), std::string::npos)
+            << ctx << ": redisField contains a space";
+        EXPECT_EQ(r.redisField.find('|'), std::string::npos)
+            << ctx << ": redisField contains a '|'";
+
+        // Pattern must be a valid regex (the receiver compiles it icase).
+        EXPECT_NO_THROW({ std::regex re(r.pathPattern, std::regex::icase);
+                          (void)re; })
+            << ctx << ": pathPattern is not a valid regex";
+
+        EXPECT_TRUE(isValidFieldType(r.type)) << ctx << ": invalid FieldType";
     }
 }
 
-TEST(FieldMappingTables, AlertEntriesSatisfyInvariants)
+// Every alert rule must carry a non-empty pattern + canonical name, a
+// compilable regex, and a unit iff it is a measurement rule.
+TEST(FieldMappingTables, AlertRulesSatisfyInvariants)
 {
-    for (const auto& m : getAlertMappings())
+    for (const auto& r : getAlertRules())
     {
-        checkEntryInvariants(m, "alert[" + m.jsonPath + "]");
+        const std::string ctx = "alert[" + r.alertName + "]";
+        EXPECT_FALSE(r.fieldPattern.empty()) << ctx << ": empty fieldPattern";
+        EXPECT_FALSE(r.alertName.empty())    << ctx << ": empty alertName";
+
+        // alertName becomes the Redis key suffix; spaces/pipes would corrupt
+        // the RACK_MANAGER_ALERT|<name> key.
+        EXPECT_EQ(r.alertName.find(' '), std::string::npos)
+            << ctx << ": alertName contains a space";
+        EXPECT_EQ(r.alertName.find('|'), std::string::npos)
+            << ctx << ": alertName contains a '|'";
+
+        // Pattern must be a valid regex (the receiver compiles it icase).
+        EXPECT_NO_THROW({ std::regex re(r.fieldPattern, std::regex::icase);
+                          (void)re; })
+            << ctx << ": fieldPattern is not a valid regex";
+
+        if (r.isMeasurement)
+        {
+            EXPECT_FALSE(r.unit.empty())
+                << ctx << ": measurement rule must define a unit";
+        }
+        else
+        {
+            EXPECT_TRUE(r.unit.empty())
+                << ctx << ": leak rule must not define a unit";
+        }
     }
 }
 
@@ -101,24 +123,14 @@ TEST(FieldMappingTables, AlertEntriesSatisfyInvariants)
 // to prevent cross-table collisions in STATE_DB.
 // ---------------------------------------------------------------------------
 
-TEST(FieldMappingTables, TelemetryKeysSharePrefix)
+TEST(FieldMappingTables, TelemetryKeyIsCanonical)
 {
-    for (const auto& m : getTelemetryMappings())
-    {
-        EXPECT_EQ(m.redisKey.rfind(TELEMETRY_REDIS_KEY_PREFIX, 0), 0u)
-            << "telemetry key '" << m.redisKey
-            << "' does not start with '" << TELEMETRY_REDIS_KEY_PREFIX << "'";
-    }
+    EXPECT_STREQ(TELEMETRY_KEY, TELEMETRY_REDIS_KEY);
 }
 
-TEST(FieldMappingTables, AlertKeysSharePrefix)
+TEST(FieldMappingTables, AlertKeyPrefixIsCanonical)
 {
-    for (const auto& m : getAlertMappings())
-    {
-        EXPECT_EQ(m.redisKey.rfind(ALERT_REDIS_KEY_PREFIX, 0), 0u)
-            << "alert key '" << m.redisKey
-            << "' does not start with '" << ALERT_REDIS_KEY_PREFIX << "'";
-    }
+    EXPECT_STREQ(ALERT_KEY_PREFIX, "RACK_MANAGER_ALERT|");
 }
 
 // ---------------------------------------------------------------------------
@@ -126,27 +138,118 @@ TEST(FieldMappingTables, AlertKeysSharePrefix)
 // the second HSET would silently overwrite the first.
 // ---------------------------------------------------------------------------
 
-static void checkNoDuplicateKeyField(const std::vector<FieldMapping>& table,
-                                     const std::string& tableName)
+// Two telemetry rules must never target the same flattened field; the second
+// HSET would silently overwrite the first within TELEMETRY_KEY.
+TEST(FieldMappingTables, NoDuplicateRedisTargetsInTelemetry)
 {
-    std::set<std::pair<std::string, std::string>> seen;
-    for (const auto& m : table)
+    std::set<std::string> seen;
+    for (const auto& r : getTelemetryRules())
     {
-        auto inserted = seen.emplace(m.redisKey, m.redisField);
-        EXPECT_TRUE(inserted.second)
-            << tableName << ": duplicate (" << m.redisKey << ", "
-            << m.redisField << ")";
+        EXPECT_TRUE(seen.emplace(r.redisField).second)
+            << "telemetry: duplicate redisField '" << r.redisField << "'";
     }
 }
 
-TEST(FieldMappingTables, NoDuplicateRedisTargetsInTelemetry)
+// Two rules must never resolve to the same canonical alert name; a later
+// HSET would clobber the earlier alert's hash.
+TEST(FieldMappingTables, NoDuplicateAlertNames)
 {
-    checkNoDuplicateKeyField(getTelemetryMappings(), "telemetry");
+    std::set<std::string> seen;
+    for (const auto& r : getAlertRules())
+    {
+        EXPECT_TRUE(seen.emplace(r.alertName).second)
+            << "duplicate alertName: " << r.alertName;
+    }
 }
 
-TEST(FieldMappingTables, NoDuplicateRedisTargetsInAlerts)
+// ---------------------------------------------------------------------------
+// Matching semantics -- mirror the receiver's whole-name, case-insensitive
+// regex match so the canonical mapping is locked down by tests.
+// ---------------------------------------------------------------------------
+
+// Resolve a field/entry name to its canonical alert name ("" if no rule
+// matches), restricted to measurement or leak rules per `measurement`.
+static std::string resolveAlert(const std::string& name, bool measurement)
 {
-    checkNoDuplicateKeyField(getAlertMappings(), "alerts");
+    for (const auto& r : getAlertRules())
+    {
+        if (r.isMeasurement != measurement) { continue; }
+        std::regex re(r.fieldPattern, std::regex::icase);
+        if (std::regex_match(name, re)) { return r.alertName; }
+    }
+    return "";
+}
+
+TEST(AlertMatching, MeasurementFieldsResolveRegardlessOfPrefixOrCase)
+{
+    EXPECT_EQ(resolveAlert("InletTemperature", true), "Inlet_liquid_temperature");
+    EXPECT_EQ(resolveAlert("SmartItInletTemperature", true),
+              "Inlet_liquid_temperature");
+    EXPECT_EQ(resolveAlert("inlettemperature", true),
+              "Inlet_liquid_temperature");
+    EXPECT_EQ(resolveAlert("FlowRate", true), "Inlet_liquid_flow_rate");
+    EXPECT_EQ(resolveAlert("LiquidPressure", true), "Inlet_liquid_pressure");
+}
+
+TEST(AlertMatching, LeakEntriesResolveByName)
+{
+    EXPECT_EQ(resolveAlert("LeakDetected", false), "leak_detected");
+    EXPECT_EQ(resolveAlert("SmartItLeakDetected", false), "leak_detected");
+    EXPECT_EQ(resolveAlert("LeakRopeBreak", false), "leak_rope_break");
+    EXPECT_EQ(resolveAlert("SmartItLeakRopeBreak", false), "leak_rope_break");
+}
+
+TEST(AlertMatching, WrapperNamesDoNotMatchMeasurements)
+{
+    // Wrapper objects (e.g. "FlowRateDeviation") must NOT be treated as a
+    // leaf measurement; only their inner numeric leaves are.
+    EXPECT_EQ(resolveAlert("FlowRateDeviation", true), "");
+    EXPECT_EQ(resolveAlert("InletTemperatureDeviation", true), "");
+    EXPECT_EQ(resolveAlert("ShutdownAlert", false), "");
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry matching -- mirror the receiver's whole-name, case-insensitive
+// match of a leaf's trailing dotted path against the telemetry rules.
+// ---------------------------------------------------------------------------
+
+// Resolve a leaf's trailing dotted path to its flattened field ("" if none).
+static std::string resolveTelemetry(const std::string& path)
+{
+    for (const auto& r : getTelemetryRules())
+    {
+        std::regex re(r.pathPattern, std::regex::icase);
+        if (std::regex_match(path, re)) { return r.redisField; }
+    }
+    return "";
+}
+
+TEST(TelemetryMatching, FlatLeavesResolveByName)
+{
+    EXPECT_EQ(resolveTelemetry("EnergyValveActive"), "energy_valve_active");
+    EXPECT_EQ(resolveTelemetry("TemperatureSensorActive"),
+              "temperature_sensor_active");
+    EXPECT_EQ(resolveTelemetry("GlycolConcentration"), "glycol_concentration");
+    EXPECT_EQ(resolveTelemetry("RscmPosition"), "rscm_position");
+}
+
+TEST(TelemetryMatching, NestedLeavesResolveRegardlessOfPrefix)
+{
+    EXPECT_EQ(resolveTelemetry("InletTempDeviation.InletTemperature"),
+              "inlet_temp_deviation_temperature");
+    // A leading prefix (e.g. the envelope name) must not break the match.
+    EXPECT_EQ(resolveTelemetry("Alarms.InletTempDeviation.InletTemperature"),
+              "inlet_temp_deviation_temperature");
+    EXPECT_EQ(resolveTelemetry("LeakDetected.Severity"),
+              "leak_detected_severity");
+    EXPECT_EQ(resolveTelemetry("FlowRateDeviation.FlowRate"),
+              "flow_rate_deviation_flow_rate");
+}
+
+TEST(TelemetryMatching, UnknownLeavesDoNotMatch)
+{
+    EXPECT_EQ(resolveTelemetry("Unknown.Leaf"), "");
+    EXPECT_EQ(resolveTelemetry("InletTempDeviation"), "");
 }
 
 } // namespace sonic::dbus_bridge::test

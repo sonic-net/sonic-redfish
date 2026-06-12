@@ -8,4 +8,4 @@
 0001-Integrating-bmcweb-with-SONiC-s-build-system.patch
 0002-Add-Product-field-to-Redfish-service-root.patch
 0003-pin-sdbusplus-to-known-good-revision.patch
-0003-Integrate-SONiC-OEM-extension.patch
+0004-Integrate-SONiC-OEM-extension.patch

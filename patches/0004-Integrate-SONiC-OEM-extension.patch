@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: SONiC Team <support@nexthop.ai>
+From: Chinmoy Dey <chinmoy@nexthop.ai>
 Date: Tue, 25 Mar 2026 00:00:00 +0000
-Subject: [PATCH 3/3] Integrate SONiC OEM extension
+Subject: [PATCH 4/4] Integrate SONiC OEM extension
 
 Register SONiC OEM Redfish routes and install OEM JSON schemas.
 
