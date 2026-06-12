@@ -15,6 +15,7 @@
 #include <boost/beast/http/status.hpp>
 
 #include <memory>
+#include <regex>
 #include <string>
 
 namespace redfish
@@ -27,9 +28,13 @@ namespace redfish
  * sonic-dbus-bridge via D-Bus.  The bridge uses a declarative
  * field-mapping table to persist the data in Redis STATE_DB.
  *
+ * The alert payload is wrapped under a top-level envelope key matching the
+ * fixed "redfish.*" pattern (e.g. "redfish_alert_data", "redfishXYZ"); more
+ * than one such envelope may be present and each is processed independently.
+ *
  * Request body example (flat form):
  *   {
- *     "Redfish": {
+ *     "redfish_alert_data": {
  *       "LiquidPressureDeviation": {
  *         "LiquidPressure": 68,
  *         "Severity": "Major",
@@ -59,12 +64,27 @@ inline void handleSonicSubmitAlert(
         return;
     }
 
-    // Require the top-level key.  The rack-manager firmware wraps every
-    // alert payload (flat or ShutdownAlert form) under "Redfish"; the
-    // bridge's field_mapping paths assume that envelope.
-    if (!reqJson->contains("Redfish"))
+    // Require at least one top-level envelope key matching the fixed
+    // (case-sensitive) "redfish.*" pattern (e.g. "redfish_alert_data",
+    // "redfishXYZ").  The rack-manager firmware wraps every alert payload
+    // (flat or ShutdownAlert form) under such an envelope; the bridge
+    // recursively classifies the entries beneath each matching envelope.
+    static const std::regex envelopePattern("redfish.*");
+    bool hasEnvelope = false;
+    if (reqJson->is_object())
     {
-        messages::propertyMissing(asyncResp->res, "Redfish");
+        for (const auto& item : reqJson->items())
+        {
+            if (std::regex_match(item.key(), envelopePattern))
+            {
+                hasEnvelope = true;
+                break;
+            }
+        }
+    }
+    if (!hasEnvelope)
+    {
+        messages::propertyMissing(asyncResp->res, "redfish");
         return;
     }
 

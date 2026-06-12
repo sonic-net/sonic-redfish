@@ -8,68 +8,209 @@
 ///////////////////////////////////////
 
 #include "rack_manager_receiver.hpp"
+#include "bridge_utils.hpp"
 #include "logger.hpp"
 
 #include <json/json.h>
 
 #include <sstream>
+#include <tuple>
+#include <vector>
 
 namespace sonic::dbus_bridge
 {
 
+// Pre-extracted (key, field, value) triples destined for Redis HSET.
+using RedisWrites =
+    std::vector<std::tuple<std::string, std::string, std::string>>;
+
 // ---------------------------------------------------------------------------
-// JSON path resolver:  "a.b.c"  ->  root["a"]["b"]["c"]
+// Alert extraction helpers (SubmitAlert)
 // ---------------------------------------------------------------------------
-static Json::Value resolveJsonPath(const Json::Value& root,
-                                   const std::string& path)
+
+// Append a measurement alert (value + unit + severity + timestamp [+ rscm]).
+static void emitMeasurementAlert(const AlertRule& rule,
+                                 const Json::Value& measurement,
+                                 const std::string& severity,
+                                 const std::string& rscm,
+                                 const std::string& timestamp,
+                                 RedisWrites& writes)
 {
-    Json::Value current = root;
-    std::istringstream iss(path);
-    std::string token;
-    while (std::getline(iss, token, '.'))
+    const std::string key = std::string(ALERT_KEY_PREFIX) + rule.alertName;
+    writes.emplace_back(key, "value", numberToString(measurement));
+    if (!rule.unit.empty())
     {
-        if (!current.isObject() || !current.isMember(token))
-        {
-            return Json::nullValue;
-        }
-        current = current[token];
+        writes.emplace_back(key, "unit", rule.unit);
     }
-    return current;
+    writes.emplace_back(key, "severity", severity);
+    writes.emplace_back(key, "timestamp", timestamp);
+    if (!rscm.empty())
+    {
+        writes.emplace_back(key, "rscm_position", rscm);
+    }
+}
+
+// Append a stateful leak alert (leak[=severity] + timestamp [+ rscm]).
+static void emitLeakAlert(const AlertRule& rule, const std::string& severity,
+                          const std::string& rscm,
+                          const std::string& timestamp, RedisWrites& writes)
+{
+    const std::string key = std::string(ALERT_KEY_PREFIX) + rule.alertName;
+    writes.emplace_back(key, "leak", severity);
+    writes.emplace_back(key, "timestamp", timestamp);
+    if (!rscm.empty())
+    {
+        writes.emplace_back(key, "rscm_position", rscm);
+    }
+}
+
+// Recursively walk the alert envelope.  Severity / RscmPosition inherit from
+// the nearest enclosing object when absent on a node; severity defaults to
+// "Normal" (with a WARN) when never supplied.  A node is treated as a leak
+// alert when its own key matches a leak rule; each numeric member is matched
+// against the measurement rules and fanned out independently.
+static void extractAlerts(const std::string& nodeKey, const Json::Value& node,
+                          const std::string& inheritedSeverity,
+                          bool severityFound, const std::string& inheritedRscm,
+                          const std::string& timestamp, RedisWrites& writes)
+{
+    if (node.isArray())
+    {
+        for (const auto& elem : node)
+        {
+            extractAlerts(nodeKey, elem, inheritedSeverity, severityFound,
+                          inheritedRscm, timestamp, writes);
+        }
+        return;
+    }
+
+    if (!node.isObject())
+    {
+        return;
+    }
+
+    // Resolve this object's effective context, inheriting when absent.
+    std::string severity = inheritedSeverity;
+    bool haveSeverity = severityFound;
+    if (node.isMember("Severity") && node["Severity"].isString())
+    {
+        severity = node["Severity"].asString();
+        haveSeverity = true;
+    }
+    std::string rscm = inheritedRscm;
+    if (node.isMember("RscmPosition"))
+    {
+        std::string r = rscmToString(node["RscmPosition"]);
+        if (!r.empty()) { rscm = r; }
+    }
+
+    const auto& rules = getAlertRules();
+
+    // Is this object itself a stateful (leak) alert?
+    for (const auto& rule : rules)
+    {
+        if (rule.isMeasurement || !matchesName(nodeKey, rule.fieldPattern))
+        {
+            continue;
+        }
+        std::string sev = severity;
+        if (!haveSeverity)
+        {
+            sev = "Normal";
+            LOG_WARNING("RackManagerReceiver: alert '%s' missing Severity; "
+                        "defaulting to Normal (malformed alert JSON)",
+                        nodeKey.c_str());
+        }
+        emitLeakAlert(rule, sev, rscm, timestamp, writes);
+        break;
+    }
+
+    // Walk members: numeric leaves -> measurement alerts; objects -> recurse.
+    for (const auto& name : node.getMemberNames())
+    {
+        if (name == "Severity" || name == "RscmPosition")
+        {
+            continue;
+        }
+        const Json::Value& child = node[name];
+
+        if (child.isNumeric())
+        {
+            for (const auto& rule : rules)
+            {
+                if (!rule.isMeasurement ||
+                    !matchesName(name, rule.fieldPattern))
+                {
+                    continue;
+                }
+                std::string sev = severity;
+                if (!haveSeverity)
+                {
+                    sev = "Normal";
+                    LOG_WARNING("RackManagerReceiver: alert '%s' missing "
+                                "Severity; defaulting to Normal (malformed "
+                                "alert JSON)", name.c_str());
+                }
+                emitMeasurementAlert(rule, child, sev, rscm, timestamp,
+                                     writes);
+                break;
+            }
+        }
+        else if (child.isObject() || child.isArray())
+        {
+            extractAlerts(name, child, severity, haveSeverity, rscm,
+                          timestamp, writes);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Serialise a Json::Value to a string suitable for Redis storage
+// Telemetry extraction helper (SubmitTelemetry)
 // ---------------------------------------------------------------------------
-static std::string valueToString(const Json::Value& val, FieldType type)
+
+// Recursively walk the telemetry envelope, building the trailing dotted path
+// of every scalar leaf (e.g. "InletTempDeviation.InletTemperature").  Each
+// leaf path is matched against getTelemetryRules(); the first matching rule
+// flattens the value into the single TELEMETRY_KEY hash under its field name
+// (first-match-wins, so rule patterns are kept mutually exclusive).
+static void extractTelemetry(const std::string& path, const Json::Value& node,
+                             RedisWrites& writes)
 {
-    if (val.isNull())
+    if (node.isArray())
     {
-        return "";
+        for (const auto& elem : node)
+        {
+            extractTelemetry(path, elem, writes);
+        }
+        return;
     }
 
-    switch (type)
+    if (node.isObject())
     {
-        case FieldType::String:
-            return val.isString() ? val.asString() : val.toStyledString();
-
-        case FieldType::Number:
-            if (val.isDouble())
-            {
-                return std::to_string(val.asDouble());
-            }
-            if (val.isIntegral())
-            {
-                return std::to_string(val.asInt64());
-            }
-            return "";
-
-        case FieldType::Integer:
-            return val.isIntegral() ? std::to_string(val.asInt64()) : "";
-
-        case FieldType::Boolean:
-            return val.isBool() ? (val.asBool() ? "true" : "false") : "";
+        for (const auto& name : node.getMemberNames())
+        {
+            const std::string childPath =
+                path.empty() ? name : path + "." + name;
+            extractTelemetry(childPath, node[name], writes);
+        }
+        return;
     }
-    return "";
+
+    // Scalar leaf: resolve against the telemetry rules.
+    for (const auto& rule : getTelemetryRules())
+    {
+        if (!matchesName(path, rule.pathPattern))
+        {
+            continue;
+        }
+        std::string strVal = valueToString(node, rule.type);
+        if (!strVal.empty())
+        {
+            writes.emplace_back(TELEMETRY_KEY, rule.redisField,
+                                std::move(strVal));
+        }
+        break;  // first-match-wins
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -124,8 +265,8 @@ bool RackManagerReceiver::initialize()
                 jobsReceived_.fetch_add(1, std::memory_order_relaxed);
                 LOG_INFO("RackManagerReceiver: SubmitAlert received (%zu bytes)",
                          jsonStr.size());
-                Job j{&getAlertMappings(), {}};
-                if (!buildJob(jsonStr, *j.mappings, j))
+                Job j{};
+                if (!buildAlertJob(jsonStr, j))
                 {
                     return false;
                 }
@@ -148,8 +289,8 @@ bool RackManagerReceiver::initialize()
                 jobsReceived_.fetch_add(1, std::memory_order_relaxed);
                 LOG_INFO("RackManagerReceiver: SubmitTelemetry received (%zu bytes)",
                          jsonStr.size());
-                Job j{&getTelemetryMappings(), {}};
-                if (!buildJob(jsonStr, *j.mappings, j))
+                Job j{};
+                if (!buildTelemetryJob(jsonStr, j))
                 {
                     return false;
                 }
@@ -242,12 +383,13 @@ bool RackManagerReceiver::connectRedis()
 }
 
 // ---------------------------------------------------------------------------
-// Parse JSON + walk mapping table on the dispatch thread.  Cheap; the
-// I/O is what we keep off this thread.
+// Parse SubmitTelemetry JSON and recursively extract canonical telemetry.
+// Field-driven (see getTelemetryRules()): every scalar leaf under the "Alarms"
+// envelope is matched by its trailing dotted path and flattened into the
+// single TELEMETRY_KEY hash.
 // ---------------------------------------------------------------------------
-bool RackManagerReceiver::buildJob(const std::string& jsonStr,
-                                   const std::vector<FieldMapping>& mappings,
-                                   Job& out)
+bool RackManagerReceiver::buildTelemetryJob(const std::string& jsonStr,
+                                            Job& out)
 {
     Json::Value root;
     Json::CharReaderBuilder builder;
@@ -255,19 +397,81 @@ bool RackManagerReceiver::buildJob(const std::string& jsonStr,
     std::string errors;
     if (!Json::parseFromStream(builder, iss, &root, &errors))
     {
-        LOG_ERROR("RackManagerReceiver: JSON parse error: %s",
+        LOG_ERROR("RackManagerReceiver: telemetry JSON parse error: %s",
                   errors.c_str());
         return false;
     }
 
-    out.writes.reserve(mappings.size());
-    for (const auto& m : mappings)
+    constexpr const char* kEnvelope = "Alarms";
+    if (!root.isObject() || !root.isMember(kEnvelope))
     {
-        Json::Value val = resolveJsonPath(root, m.jsonPath);
-        if (val.isNull()) { continue; }
-        std::string strVal = valueToString(val, m.type);
-        if (strVal.empty()) { continue; }
-        out.writes.emplace_back(m.redisKey, m.redisField, std::move(strVal));
+        LOG_ERROR("RackManagerReceiver: telemetry missing '%s' envelope",
+                  kEnvelope);
+        return false;
+    }
+
+    extractTelemetry(/*path=*/"", root[kEnvelope], out.writes);
+
+    if (out.writes.empty())
+    {
+        LOG_WARNING("RackManagerReceiver: SubmitTelemetry produced no "
+                    "recognised telemetry (no matching leaf paths)");
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Parse SubmitAlert JSON and recursively extract canonical alerts.  Field-
+// driven (see getAlertRules()), so the same rule resolves an entry regardless
+// of nesting depth or wrapper key name.  Every top-level key matching the
+// fixed (case-sensitive) "redfish.*" envelope pattern is processed as an
+// independent envelope; their alerts merge into one Redis write batch.
+// ---------------------------------------------------------------------------
+bool RackManagerReceiver::buildAlertJob(const std::string& jsonStr, Job& out)
+{
+    Json::Value root;
+    Json::CharReaderBuilder builder;
+    std::istringstream iss(jsonStr);
+    std::string errors;
+    if (!Json::parseFromStream(builder, iss, &root, &errors))
+    {
+        LOG_ERROR("RackManagerReceiver: alert JSON parse error: %s",
+                  errors.c_str());
+        return false;
+    }
+
+    constexpr const char* kEnvelopePattern = "redfish.*";
+    if (!root.isObject())
+    {
+        LOG_ERROR("RackManagerReceiver: alert payload is not a JSON object");
+        return false;
+    }
+
+    const std::string timestamp = isoUtcNow();
+    bool matchedEnvelope = false;
+    for (const auto& name : root.getMemberNames())
+    {
+        if (!matchesName(name, kEnvelopePattern, /*caseInsensitive=*/false))
+        {
+            continue;
+        }
+        matchedEnvelope = true;
+        extractAlerts(name, root[name], /*inheritedSeverity=*/"",
+                      /*severityFound=*/false, /*inheritedRscm=*/"", timestamp,
+                      out.writes);
+    }
+
+    if (!matchedEnvelope)
+    {
+        LOG_ERROR("RackManagerReceiver: alert missing a '%s' envelope key",
+                  kEnvelopePattern);
+        return false;
+    }
+
+    if (out.writes.empty())
+    {
+        LOG_WARNING("RackManagerReceiver: SubmitAlert produced no recognised "
+                    "alerts (no matching measurement/leak fields)");
     }
     return true;
 }

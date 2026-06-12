@@ -72,10 +72,10 @@
             "description": "Submits structured alert data from a rack manager to the switch BMC.",
             "longDescription": "This action shall submit a set of structured alert entries from a rack manager to the switch BMC.  Per DMTF action idiom this definition serves two roles: the `parameters` block describes the POST request body (clients sending POSTs should look there); the `properties` block (target, title) describes how the action is advertised on GET of the parent resource.",
             "parameters": {
-                "Redfish": {
+                "redfish": {
                     "additionalProperties": true,
                     "description": "Open container for alert entries, keyed by alert type name.",
-                    "longDescription": "Required.  Keys are vendor-defined alert type names; values are either an AlertEntry or a wrapper object (for example, ShutdownAlert) whose children are themselves AlertEntry-shaped with a shared RscmPosition on the wrapper.",
+                    "longDescription": "Required.  The envelope key is matched at runtime against the fixed pattern `redfish.*` (for example `redfish_alert_data` or `redfishXYZ`); `redfish` is shown here as the canonical name and more than one matching envelope may be present.  Keys within are vendor-defined alert type names; values are either an AlertEntry or a wrapper object (for example, ShutdownAlert) whose children are themselves AlertEntry-shaped with a shared RscmPosition on the wrapper.  The receiver classifies each entry by the measurement field it carries (case-insensitive match on the trailing field name, e.g. *InletTemperature, *FlowRate, *LiquidPressure) or by a leak entry name (*LeakDetected, *LeakRopeBreak) and persists it under a canonical RACK_MANAGER_ALERT|<name> key.  Severity and RscmPosition are inherited from the nearest enclosing object when absent on a leaf.",
                     "requiredParameter": true,
                     "type": "object"
                 }
@@ -96,12 +96,8 @@
         "AlertEntry": {
             "additionalProperties": true,
             "description": "A single alert entry.",
-            "longDescription": "Each entry shall include Severity.  RscmPosition is present on flat alerts and inherited from the wrapper for nested alerts under a ShutdownAlert-style container.  Additional properties beyond these are alert-type specific (for example FlowRate, LiquidPressure, InletTemperature) and shall be passed through to the BMC for storage.",
+            "longDescription": "Each entry shall include Severity.  Additional properties beyond Severity are alert-type specific (for example FlowRate, LiquidPressure, InletTemperature) and shall be passed through to the BMC for storage.  An optional RscmPosition may appear on any enclosing object and is inherited by entries that omit it; because the envelope is open it is not enumerated here but is still read and persisted as rscm_position when present.",
             "properties": {
-                "RscmPosition": {
-                    "description": "RSCM position identifier; optional in nested form (inherited from the parent wrapper).",
-                    "type": "integer"
-                },
                 "Severity": {
                     "$ref": "#/definitions/SonicSeverity",
                     "description": "Severity of the alert condition."
@@ -138,7 +134,7 @@
         "Alarms": {
             "additionalProperties": true,
             "description": "Open telemetry payload container.",
-            "longDescription": "Following the SubmitAlert idiom (the `Redfish` parameter on SubmitAlert is also an open container; see AlertEntry for the per-entry shape), this object is intentionally open: the schema does not enumerate individual sensor or measurement fields.  The set of recognised keys is defined by the bridge's declarative field-mapping table.",
+            "longDescription": "Following the SubmitAlert idiom (the `redfish` parameter on SubmitAlert is also an open container; see AlertEntry for the per-entry shape), this object is intentionally open: the schema does not enumerate individual sensor or measurement fields.  The set of recognised keys is defined by the bridge's declarative field-mapping table.",
             "type": "object"
         },
         "SonicSeverity": {

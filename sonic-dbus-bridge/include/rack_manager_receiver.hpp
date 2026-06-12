@@ -94,9 +94,6 @@ class RackManagerReceiver
     // consumer = single worker thread.
     struct Job
     {
-        // We hold raw pointers into the static mapping tables (whose
-        // lifetime is the program), not copies, to keep enqueue O(1).
-        const std::vector<FieldMapping>* mappings;
         // Pre-extracted (key, field, value) triples; parsing happens on
         // the dispatch thread because it is bounded and cheap, while
         // I/O is the part that must not block dispatch.
@@ -131,12 +128,29 @@ class RackManagerReceiver
     bool connectRedis();   // worker-thread-only
 
     /**
-     * @brief Parse JSON + walk the mapping table, build a Job.
-     * @return true on success; false on JSON parse failure (the D-Bus method
-     *         handler returns false to the D-Bus caller to signal rejection)
+     * @brief Parse SubmitTelemetry JSON and recursively extract telemetry.
+     *
+     * Walks the "Alarms" envelope, matching every scalar leaf by its trailing
+     * dotted path and flattening matches into the single TELEMETRY_KEY hash
+     * (see getTelemetryRules()).
+     *
+     * @return true on success; false on JSON parse failure or a missing
+     *         "Alarms" envelope.
      */
-    bool buildJob(const std::string& jsonStr,
-                  const std::vector<FieldMapping>& mappings, Job& out);
+    bool buildTelemetryJob(const std::string& jsonStr, Job& out);
+
+    /**
+     * @brief Parse SubmitAlert JSON and recursively extract canonical alerts.
+     *
+     * Processes every top-level key matching the fixed (case-sensitive)
+     * "redfish.*" envelope pattern, inheriting Severity / RscmPosition from
+     * the nearest enclosing object, and fans matching fields/entries out into
+     * RACK_MANAGER_ALERT|<name> writes (see getAlertRules()).
+     *
+     * @return true on success; false on JSON parse failure or when no
+     *         "redfish.*" envelope key is present.
+     */
+    bool buildAlertJob(const std::string& jsonStr, Job& out);
 
     void workerLoop();
     void drainOne(const Job& job);

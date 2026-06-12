@@ -10,21 +10,11 @@
 #pragma once
 
 //
-// Declarative field-mapping tables for Rack Manager alerts and telemetry.
-//
-// Each entry maps a dot-separated JSON path to a Redis hash key+field.
-// When the input JSON schema changes, update ONLY these tables -- no other
-// code needs to change.
-//
-// Example (telemetry):
-//   JSON path  "Alarms.InletTempDeviation.InletTemperature"
-//   is stored as
-//     HSET RSCM_TELEMETRY|alarms inlet_temp_deviation_temperature <value>
-//
-// Example (alert, flat):
-//   JSON path  "Redfish.LiquidPressureDeviation.LiquidPressure"
-//   is stored as
-//     HSET RSCM_ALERT|LiquidPressureDeviation liquid_pressure <value>
+// Declarative regex mapping tables for Rack Manager telemetry and alerts.
+// Patterns are matched case-insensitively as whole-name matches against a
+// recursively-walked payload, so nesting depth and wrapper key names do not
+// matter.  Telemetry flattens every match into a single Redis hash; alerts
+// fan out into per-name RACK_MANAGER_ALERT|<name> keys.
 //
 
 #include <string>
@@ -41,156 +31,83 @@ enum class FieldType
     Boolean
 };
 
-struct FieldMapping
+// Canonical Redis hash key into which all telemetry matches are flattened.
+inline constexpr const char* TELEMETRY_KEY = "RSCM_TELEMETRY|alarms";
+
+struct TelemetryRule
 {
-    std::string jsonPath;     // Dot-separated path in the input JSON
-    std::string redisKey;     // Redis hash key
-    std::string redisField;   // Redis hash field name
-    FieldType   type;         // Expected value type (for serialisation)
+    std::string pathPattern;   // Regex vs. a leaf's trailing dotted path.
+    std::string redisField;    // Flattened field name in TELEMETRY_KEY.
+    FieldType   type;          // Expected value type (for serialisation).
 };
 
-// -----------------------------------------------------------------------
-// Telemetry mappings  (input: SubmitTelemetry JSON)
-//
-// Body envelope:  {"Alarms": { ... }}
-//
-// To add a new field:
-//   1. Add a line here with the JSON path, target Redis key/field, and type.
-//   2. That's it -- the receiver walks this table automatically.
-//
-// To remove a field:
-//   1. Delete the row.  The bridge will silently ignore the data if the
-//      firmware still emits it (resolveJsonPath returns null for unknown
-//      paths).  Stored history is not deleted by this change.
-// -----------------------------------------------------------------------
-inline const std::vector<FieldMapping>& getTelemetryMappings()
+// Telemetry rules (input: SubmitTelemetry "Alarms" envelope).  Keep redisField
+// values unique and patterns mutually exclusive (first match wins).
+inline const std::vector<TelemetryRule>& getTelemetryRules()
 {
-    static const std::vector<FieldMapping> mappings = {
+    static const std::vector<TelemetryRule> rules = {
         // --- Sensor status flags ---
-        {"Alarms.EnergyValveActive",       "RSCM_TELEMETRY|alarms", "energy_valve_active",       FieldType::Boolean},
-        {"Alarms.EnergyValvePresent",      "RSCM_TELEMETRY|alarms", "energy_valve_present",      FieldType::Boolean},
-        {"Alarms.FlowrateSensorActive",    "RSCM_TELEMETRY|alarms", "flowrate_sensor_active",    FieldType::Boolean},
-        {"Alarms.PressureSensorActive",    "RSCM_TELEMETRY|alarms", "pressure_sensor_active",    FieldType::Boolean},
-        {"Alarms.TemperatureSensorActive", "RSCM_TELEMETRY|alarms", "temperature_sensor_active", FieldType::Boolean},
+        {".*EnergyValveActive",       "energy_valve_active",       FieldType::Boolean},
+        {".*EnergyValvePresent",      "energy_valve_present",      FieldType::Boolean},
+        {".*FlowrateSensorActive",    "flowrate_sensor_active",    FieldType::Boolean},
+        {".*PressureSensorActive",    "pressure_sensor_active",    FieldType::Boolean},
+        {".*TemperatureSensorActive", "temperature_sensor_active", FieldType::Boolean},
 
         // --- Inlet temperature deviation ---
-        {"Alarms.InletTempDeviation.InletTemperature", "RSCM_TELEMETRY|alarms", "inlet_temp_deviation_temperature", FieldType::Number},
-        {"Alarms.InletTempDeviation.Severity",         "RSCM_TELEMETRY|alarms", "inlet_temp_deviation_severity",    FieldType::String},
+        {".*InletTempDeviation\\.InletTemperature", "inlet_temp_deviation_temperature", FieldType::Number},
+        {".*InletTempDeviation\\.Severity",         "inlet_temp_deviation_severity",    FieldType::String},
 
         // --- Flow rate deviation ---
-        {"Alarms.FlowRateDeviation.FlowRate", "RSCM_TELEMETRY|alarms", "flow_rate_deviation_flow_rate", FieldType::Number},
-        {"Alarms.FlowRateDeviation.Severity", "RSCM_TELEMETRY|alarms", "flow_rate_deviation_severity",  FieldType::String},
+        {".*FlowRateDeviation\\.FlowRate", "flow_rate_deviation_flow_rate", FieldType::Number},
+        {".*FlowRateDeviation\\.Severity", "flow_rate_deviation_severity",  FieldType::String},
 
         // --- Liquid pressure deviation ---
-        {"Alarms.LiquidPressureDeviation.LiquidPressure", "RSCM_TELEMETRY|alarms", "liquid_pressure_deviation_pressure", FieldType::Number},
-        {"Alarms.LiquidPressureDeviation.Severity",       "RSCM_TELEMETRY|alarms", "liquid_pressure_deviation_severity", FieldType::String},
+        {".*LiquidPressureDeviation\\.LiquidPressure", "liquid_pressure_deviation_pressure", FieldType::Number},
+        {".*LiquidPressureDeviation\\.Severity",       "liquid_pressure_deviation_severity", FieldType::String},
 
         // --- Leak detection ---
-        {"Alarms.LeakDetected.LeakDetected",  "RSCM_TELEMETRY|alarms", "leak_detected",          FieldType::Boolean},
-        {"Alarms.LeakDetected.LeakRopeBreak", "RSCM_TELEMETRY|alarms", "leak_rope_break",        FieldType::Boolean},
-        {"Alarms.LeakDetected.Severity",      "RSCM_TELEMETRY|alarms", "leak_detected_severity", FieldType::String},
+        {".*LeakDetected\\.LeakDetected",  "leak_detected",          FieldType::Boolean},
+        {".*LeakDetected\\.LeakRopeBreak", "leak_rope_break",        FieldType::Boolean},
+        {".*LeakDetected\\.Severity",      "leak_detected_severity", FieldType::String},
 
         // --- General ---
-        {"Alarms.ThresholdConfigVersion", "RSCM_TELEMETRY|alarms", "threshold_config_version", FieldType::String},
-        {"Alarms.GlycolConcentration",    "RSCM_TELEMETRY|alarms", "glycol_concentration",     FieldType::Number},
-        {"Alarms.ErrorState",             "RSCM_TELEMETRY|alarms", "error_state",              FieldType::String},
-        {"Alarms.RscmPosition",           "RSCM_TELEMETRY|alarms", "rscm_position",            FieldType::Integer},
-        {"Alarms.ConfigFileCorrupted",    "RSCM_TELEMETRY|alarms", "config_file_corrupted",    FieldType::Boolean},
+        {".*ThresholdConfigVersion", "threshold_config_version", FieldType::String},
+        {".*GlycolConcentration",    "glycol_concentration",     FieldType::Number},
+        {".*ErrorState",             "error_state",              FieldType::String},
+        {".*RscmPosition",           "rscm_position",            FieldType::Integer},
+        {".*ConfigFileCorrupted",    "config_file_corrupted",    FieldType::Boolean},
     };
-    return mappings;
+    return rules;
 }
 
-// -----------------------------------------------------------------------
-// Alert mappings  (input: SubmitAlert JSON)
-//
-// Body envelope:  {"Redfish": { ... }}
-//
-// Two structural variants are supported:
-//
-//   FLAT form:
-//     {"Redfish": {
-//        "Alerts":                    { combined deviation + RscmPosition },
-//        "LiquidPressureDeviation":   { ... },
-//        "InletTemperatureDeviation": { ... },
-//        "LeakDetected":              { ... },
-//        "LeakRopeBreak":             { ... }
-//     }}
-//     Each child persists under RSCM_ALERT|<child-key>.
-//
-//   WRAPPED form (ShutdownAlert):
-//     {"Redfish": {
-//        "ShutdownAlert": {
-//            "FlowRateDeviation":      {...},
-//            "TempDeviation":          {...},
-//            "LiquidPressureDeviation":{...},
-//            "LeakDetected":           {...},
-//            "LeakRopeBreak":          {...},
-//            "RscmPosition": <int>   // wrapper-level, applies to every leaf
-//        }
-//     }}
-//     Each leaf persists under RSCM_ALERT|ShutdownAlert|<Leaf>.
-//     The wrapper's RscmPosition lands under RSCM_ALERT|ShutdownAlert;
-//     readers must join the wrapper key with each leaf key to recover
-//     the full context of a wrapped alert.
-// -----------------------------------------------------------------------
-inline const std::vector<FieldMapping>& getAlertMappings()
+// Canonical Redis key prefix for all alerts (STATE_DB).  Alerts arrive under a
+// top-level envelope key matching "redfish.*" (e.g. "redfish_alert_data") and
+// are matched by field/entry name; Severity / RscmPosition inherit from the
+// nearest enclosing object.
+inline constexpr const char* ALERT_KEY_PREFIX = "RACK_MANAGER_ALERT|";
+
+struct AlertRule
 {
-    static const std::vector<FieldMapping> mappings = {
-        // -------------------------------------------------------------------
-        // FLAT form (Sample 1)
-        // -------------------------------------------------------------------
+    std::string fieldPattern;  // Regex vs. JSON field/entry name.
+    std::string alertName;     // Canonical suffix -> RACK_MANAGER_ALERT|<alertName>
+    std::string unit;          // Measurement unit (empty for leak rules)
+    bool        isMeasurement; // true: numeric value+unit; false: stateful leak
+};
 
-        // --- "Alerts": combined inlet temperature + flow rate alert ---
-        {"Redfish.Alerts.InletTemperature", "RSCM_ALERT|Alerts", "inlet_temperature", FieldType::Number},
-        {"Redfish.Alerts.FlowRate",         "RSCM_ALERT|Alerts", "flow_rate",         FieldType::Number},
-        {"Redfish.Alerts.Severity",         "RSCM_ALERT|Alerts", "severity",          FieldType::String},
-        {"Redfish.Alerts.RscmPosition",     "RSCM_ALERT|Alerts", "rscm_position",     FieldType::Integer},
+// Alert rules.  Keep patterns mutually exclusive (first match wins).
+inline const std::vector<AlertRule>& getAlertRules()
+{
+    static const std::vector<AlertRule> rules = {
+        // --- Measurements (numeric fields; unified "value" field in Redis) ---
+        {".*InletTemperature", "Inlet_liquid_temperature", "C",               true},
+        {".*FlowRate",         "Inlet_liquid_flow_rate",   "gallons_per_min", true},
+        {".*LiquidPressure",   "Inlet_liquid_pressure",    "psi",             true},
 
-        // --- LiquidPressureDeviation ---
-        {"Redfish.LiquidPressureDeviation.LiquidPressure", "RSCM_ALERT|LiquidPressureDeviation", "liquid_pressure", FieldType::Number},
-        {"Redfish.LiquidPressureDeviation.Severity",       "RSCM_ALERT|LiquidPressureDeviation", "severity",        FieldType::String},
-        {"Redfish.LiquidPressureDeviation.RscmPosition",   "RSCM_ALERT|LiquidPressureDeviation", "rscm_position",   FieldType::Integer},
-
-        // --- InletTemperatureDeviation ---
-        {"Redfish.InletTemperatureDeviation.InletTemperature", "RSCM_ALERT|InletTemperatureDeviation", "inlet_temperature", FieldType::Number},
-        {"Redfish.InletTemperatureDeviation.Severity",         "RSCM_ALERT|InletTemperatureDeviation", "severity",          FieldType::String},
-        {"Redfish.InletTemperatureDeviation.RscmPosition",     "RSCM_ALERT|InletTemperatureDeviation", "rscm_position",     FieldType::Integer},
-
-        // --- LeakDetected (alert form -- no inner LeakDetected bool) ---
-        {"Redfish.LeakDetected.Severity",     "RSCM_ALERT|LeakDetected", "severity",      FieldType::String},
-        {"Redfish.LeakDetected.RscmPosition", "RSCM_ALERT|LeakDetected", "rscm_position", FieldType::Integer},
-
-        // --- LeakRopeBreak ---
-        {"Redfish.LeakRopeBreak.Severity",     "RSCM_ALERT|LeakRopeBreak", "severity",      FieldType::String},
-        {"Redfish.LeakRopeBreak.RscmPosition", "RSCM_ALERT|LeakRopeBreak", "rscm_position", FieldType::Integer},
-
-        // -------------
-        // WRAPPED form 
-        // -------------
-
-        // wrapper-level RscmPosition (applies to every leaf below)
-        {"Redfish.ShutdownAlert.RscmPosition", "RSCM_ALERT|ShutdownAlert", "rscm_position", FieldType::Integer},
-
-        // FlowRateDeviation (wrapped)
-        {"Redfish.ShutdownAlert.FlowRateDeviation.FlowRate", "RSCM_ALERT|ShutdownAlert|FlowRateDeviation", "flow_rate", FieldType::Number},
-        {"Redfish.ShutdownAlert.FlowRateDeviation.Severity", "RSCM_ALERT|ShutdownAlert|FlowRateDeviation", "severity",  FieldType::String},
-
-        // TempDeviation (wrapped) 
-        // it "InletTemperatureDeviation" instead.  Both are accepted.
-        {"Redfish.ShutdownAlert.TempDeviation.InletTemperature", "RSCM_ALERT|ShutdownAlert|TempDeviation", "inlet_temperature", FieldType::Number},
-        {"Redfish.ShutdownAlert.TempDeviation.Severity",         "RSCM_ALERT|ShutdownAlert|TempDeviation", "severity",          FieldType::String},
-
-        // LiquidPressureDeviation (wrapped)
-        {"Redfish.ShutdownAlert.LiquidPressureDeviation.LiquidPressure", "RSCM_ALERT|ShutdownAlert|LiquidPressureDeviation", "liquid_pressure", FieldType::Number},
-        {"Redfish.ShutdownAlert.LiquidPressureDeviation.Severity",       "RSCM_ALERT|ShutdownAlert|LiquidPressureDeviation", "severity",        FieldType::String},
-
-        // LeakDetected (wrapped) 
-        {"Redfish.ShutdownAlert.LeakDetected.Severity", "RSCM_ALERT|ShutdownAlert|LeakDetected", "severity", FieldType::String},
-
-        // LeakRopeBreak (wrapped)
-        {"Redfish.ShutdownAlert.LeakRopeBreak.Severity", "RSCM_ALERT|ShutdownAlert|LeakRopeBreak", "severity", FieldType::String},
+        // --- Stateful leak alerts (object entries; severity only) ---
+        {".*LeakRopeBreak",    "leak_rope_break",          "",                false},
+        {".*LeakDetected",     "leak_detected",            "",                false},
     };
-    return mappings;
+    return rules;
 }
 
 } // namespace sonic::dbus_bridge
