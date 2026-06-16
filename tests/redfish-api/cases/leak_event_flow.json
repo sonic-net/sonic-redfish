@@ -1,0 +1,79 @@
+[
+  {
+    "name": "leak_critical_event",
+    "description": "RMC subscribes for events; a critical leak is injected; RMC must receive LeakDetectedCritical.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers a push (webhook) subscription. No RegistryPrefixes filter: bmcweb filters sendEvent()-generated leak events out of registry-filtered subscriptions, so the RMC subscribes broadly and matches the specific leak event by MessageId/Severity below.",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-LeakTest"
+      }
+    },
+    "trigger": [
+      {
+        "description": "Inject a critical leak: set leak_sensor_1 -> Critical in STATE_DB.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 Critical"
+      }
+    ],
+    "expect_event": {
+      "description": "Within 15s, an event for leak_sensor_1 (LeakDetectedCritical, severity Critical) must arrive.",
+      "timeout_seconds": 15,
+      "validators": [
+        {"type": "equals", "path": "Events[0].MessageId", "value": "Environmental.1.1.0.LeakDetectedCritical"},
+        {"type": "equals", "path": "Events[0].Severity", "value": "Critical"},
+        {"type": "exists", "path": "Events[0].OriginOfCondition.@odata.id"}
+      ]
+    },
+    "teardown": {
+      "description": "Restore leak_sensor_1 to OK so later tests start clean.",
+      "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+    }
+  },
+  {
+    "name": "leak_recovery_event",
+    "description": "After a leak, clearing it must produce a LeakDetectedNormal recovery event.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers a push (webhook) subscription. No RegistryPrefixes filter: bmcweb filters sendEvent()-generated leak events out of registry-filtered subscriptions, so the RMC subscribes broadly and matches the specific leak event by MessageId/Severity below.",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-LeakTest"
+      }
+    },
+    "trigger": [
+      {
+        "description": "Inject a critical leak first.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 Critical"
+      },
+      {
+        "description": "Let the critical event settle before clearing.",
+        "wait_seconds": 2
+      },
+      {
+        "description": "Clear the leak to drive a recovery event.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+      }
+    ],
+    "expect_event": {
+      "description": "Within 15s, a LeakDetectedNormal event (severity OK) must arrive; the intermediate Critical event is skipped by the matcher.",
+      "timeout_seconds": 15,
+      "validators": [
+        {"type": "equals", "path": "Events[0].MessageId", "value": "Environmental.1.1.0.LeakDetectedNormal"},
+        {"type": "equals", "path": "Events[0].Severity", "value": "OK"}
+      ]
+    },
+    "teardown": {
+      "description": "Leave leak_sensor_1 at OK.",
+      "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+    }
+  }
+]
