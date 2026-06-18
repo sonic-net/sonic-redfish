@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tamer Ahmed <tamerahmed@microsoft.com>
+Date: Thu, 18 Jun 2026 00:00:00 +0000
+Subject: [PATCH] Pin sdbusplus subproject revision
+
+bmcweb is currently pinned to commit 6926d430, but its sdbusplus Meson
+wrap follows HEAD. A newer sdbusplus revision removed the
+sdbusplus::message::object_path alias used by this bmcweb revision.
+
+Pin sdbusplus to the last compatible revision before that alias was
+removed.
+---
+ subprojects/sdbusplus.wrap | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/subprojects/sdbusplus.wrap b/subprojects/sdbusplus.wrap
+index 7b076d0..a4741c6 100644
+--- a/subprojects/sdbusplus.wrap
++++ b/subprojects/sdbusplus.wrap
+@@ -1,6 +1,6 @@
+-[wrap-git]
+-url = https://github.com/openbmc/sdbusplus.git
+-revision = HEAD
+-
+-[provide]
+-sdbusplus = sdbusplus_dep
++[wrap-git]
++url = https://github.com/openbmc/sdbusplus.git
++revision = 28722b16b689fc9a0d1d99ceef2db796ee3d162f
++
++[provide]
++sdbusplus = sdbusplus_dep
