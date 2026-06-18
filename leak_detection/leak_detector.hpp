@@ -152,7 +152,7 @@ inline void doLeakDetectorGet(
         boost::beast::http::field::link,
         "</redfish/v1/JsonSchemas/LeakDetector/LeakDetector.json>; rel=describedby");
     asyncResp->res.jsonValue["@odata.type"] =
-        "#LeakDetector.v1_4_0.LeakDetector";
+        "#LeakDetector.v1_5_0.LeakDetector";
     asyncResp->res.jsonValue["@odata.id"] =
         leakDetectorMemberUri(chassisId, detectorId, form);
     asyncResp->res.jsonValue["Id"] = std::string(entry->id);

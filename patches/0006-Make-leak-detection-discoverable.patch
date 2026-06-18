@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chinmoy Dey <chinmoy@nexthop.ai>
+Date: Mon, 16 Jun 2026 00:00:00 +0000
+Subject: [PATCH 5/5] Make leak detection discoverable by navigation
+
+The standalone DMTF leak-detection handlers (patch 0004) register the
+LeakDetection / LeakDetectorCollection / LeakDetector routes, but the
+resources were not reachable by navigating the resource tree: neither
+the Chassis resource nor the ThermalSubsystem resource advertised a
+link to them.
+
+Add the standard navigation links, as upstream does for every other
+child resource, so the leak-detection tree is discoverable like a normal
+Redfish resource. Both link targets are properties already defined in the
+bundled schemas (Chassis.LeakDetectors since Chassis v1.26.0,
+ThermalSubsystem.LeakDetection), so the responses remain schema-valid
+under additionalProperties:false.
+
+ * chassis.hpp: advertise the canonical Chassis-level LeakDetectors
+   collection (/redfish/v1/Chassis/<id>/LeakDetectors).
+ * thermal_subsystem.hpp: advertise the deprecated nested LeakDetection
+   resource (/redfish/v1/Chassis/<id>/ThermalSubsystem/LeakDetection).
+
+This patch only adds link properties to existing handlers; it adds no
+new routes (those come from patch 0004).
+---
+ redfish-core/lib/chassis.hpp           | 3 +++
+ redfish-core/lib/thermal_subsystem.hpp | 4 ++++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/redfish-core/lib/chassis.hpp b/redfish-core/lib/chassis.hpp
+--- a/redfish-core/lib/chassis.hpp
++++ b/redfish-core/lib/chassis.hpp
+@@ -453,4 +453,7 @@
+     // SensorCollection
+     asyncResp->res.jsonValue["Sensors"]["@odata.id"] =
+         boost::urls::format("/redfish/v1/Chassis/{}/Sensors", chassisId);
++
++    asyncResp->res.jsonValue["LeakDetectors"]["@odata.id"] =
++        boost::urls::format("/redfish/v1/Chassis/{}/LeakDetectors", chassisId);
+     asyncResp->res.jsonValue["Status"]["State"] = resource::State::Enabled;
+diff --git a/redfish-core/lib/thermal_subsystem.hpp b/redfish-core/lib/thermal_subsystem.hpp
+--- a/redfish-core/lib/thermal_subsystem.hpp
++++ b/redfish-core/lib/thermal_subsystem.hpp
+@@ -53,6 +53,10 @@
+     asyncResp->res.jsonValue["ThermalMetrics"]["@odata.id"] =
+         boost::urls::format(
+             "/redfish/v1/Chassis/{}/ThermalSubsystem/ThermalMetrics",
+             chassisId);
++
++    asyncResp->res.jsonValue["LeakDetection"]["@odata.id"] =
++        boost::urls::format(
++            "/redfish/v1/Chassis/{}/ThermalSubsystem/LeakDetection", chassisId);
+
+     asyncResp->res.jsonValue["Status"]["State"] = resource::State::Enabled;
+--
+2.43.0

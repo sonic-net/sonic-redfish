@@ -8,4 +8,5 @@
 0001-Integrating-bmcweb-with-SONiC-s-build-system.patch
 0002-Add-Product-field-to-Redfish-service-root.patch
 0003-pin-sdbusplus-to-known-good-revision.patch
-0004-Integrate-leak-detection.patch
+0005-Integrate-leak-detection.patch
+0006-Make-leak-detection-discoverable.patch

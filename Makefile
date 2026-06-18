@@ -173,6 +173,18 @@ copy-leak-detection: setup-bmcweb
 	@cp -u $(LEAK_DET_DIR)/*.hpp $(BMCWEB_DIR)/redfish-core/lib/leak_detection/
 	@echo "  leak-detection files copied"
 
+	@echo "  Linking leak-detection JSON schemas into json-schema-installed..."
+	@for schema in LeakDetection.v1_1_0.json LeakDetector.v1_5_0.json LeakDetectorCollection.json; do \
+		src="$(BMCWEB_DIR)/redfish-core/schema/dmtf/json-schema/$$schema"; \
+		dst="$(BMCWEB_DIR)/redfish-core/schema/dmtf/json-schema-installed/$$schema"; \
+		if [ ! -f "$$src" ]; then \
+			echo "Error: expected leak schema not found in pinned bmcweb: $$schema"; \
+			exit 1; \
+		fi; \
+		ln -sf "../json-schema/$$schema" "$$dst"; \
+	done
+	@echo "  leak-detection schemas linked"
+
 # Copy patches to debian/ directory
 copy-patches: $(SERIES_FILE)
 	@echo "Copying patches to debian/ directory ..."

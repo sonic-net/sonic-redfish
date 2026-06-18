@@ -9,7 +9,67 @@
 
 """Utilities for Redfish JSON-driven testing."""
 import json
+import os
 import re
+
+SCHEMA_DIR = os.environ.get(
+    "REDFISH_SCHEMA_DIR", "/usr/share/www/redfish/v1/JsonSchemas")
+
+_schema_cache = {}
+
+
+def _load_schema(schema_file):
+    if schema_file not in _schema_cache:
+        with open(os.path.join(SCHEMA_DIR, schema_file)) as f:
+            _schema_cache[schema_file] = json.load(f)
+    return _schema_cache[schema_file]
+
+
+def _resolve_local_enum(doc, prop_schema):
+    if not isinstance(prop_schema, dict):
+        return None
+    if "enum" in prop_schema:
+        return prop_schema["enum"]
+    ref = prop_schema.get("$ref", "")
+    if ref.startswith("#/definitions/"):
+        target = doc.get("definitions", {}).get(ref.split("/")[-1], {})
+        return _resolve_local_enum(doc, target)
+    for sub in prop_schema.get("anyOf", []):
+        enum = _resolve_local_enum(doc, sub)
+        if enum is not None:
+            return enum
+    return None
+
+
+def assert_schema_conformance(obj, schema_file, definition):
+    assert isinstance(obj, dict), \
+        f"schema_conformance: response is not a JSON object (got {type(obj).__name__})"
+    doc = _load_schema(schema_file)
+    node = doc["definitions"][definition]
+    props = node.get("properties", {})
+    patterns = [re.compile(p) for p in node.get("patternProperties", {})]
+
+    if node.get("additionalProperties") is False:
+        for key in obj:
+            allowed = key in props or any(p.search(key) for p in patterns)
+            assert allowed, (
+                f"schema_conformance: property '{key}' is not defined in "
+                f"{schema_file}#/definitions/{definition} "
+                f"(additionalProperties:false)")
+
+    for req in node.get("required", []):
+        assert req in obj, (
+            f"schema_conformance: required property '{req}' missing "
+            f"(per {schema_file}#/definitions/{definition})")
+
+    for key, value in obj.items():
+        if key in props and not isinstance(value, (dict, list)):
+            enum = _resolve_local_enum(doc, props[key])
+            if enum is not None:
+                assert value in enum, (
+                    f"schema_conformance: '{key}' value '{value}' is not in the "
+                    f"schema enum {enum}")
+
 
 def extract_path(data, path):
     """Simple JSONPath-like extractor. E.g., 'Members[0].@odata.id'"""
@@ -98,5 +158,8 @@ def run_validators(validators, actual, state):
                 f"Validator failed: '{path}' is not a string (got {type(extracted).__name__})"
             assert expected_val not in extracted, \
                 f"Validator failed: '{path}' ('{extracted}') unexpectedly contains '{expected_val}'"
+        elif v_type == "schema_conformance":
+            assert_schema_conformance(
+                extracted, val["schema_file"], val["definition"])
         else:
             raise ValueError(f"Unknown validator type: {v_type}")

@@ -36,8 +36,8 @@
     }
   },
   {
-    "name": "test_chassis_lists_thermalsubsystem_link",
-    "description": "Contract: chassis must advertise ThermalSubsystem so clients can reach LeakDetection",
+    "name": "test_chassis_advertises_subsystem_links",
+    "description": "Chassis advertises ThermalSubsystem and the canonical LeakDetectors collection so both are reachable by navigation",
     "method": "GET",
     "endpoint": "{{STATE.CHASSIS_URI}}",
     "expected_status": 200,
@@ -48,7 +48,27 @@
       }
     ],
     "validators": [
-      { "type": "exists", "path": "ThermalSubsystem.@odata.id" }
+      { "type": "exists",       "path": "ThermalSubsystem.@odata.id" },
+      { "type": "exists",       "path": "LeakDetectors.@odata.id" },
+      { "type": "contains",     "path": "LeakDetectors.@odata.id", "value": "/LeakDetectors" },
+      { "type": "not_contains", "path": "LeakDetectors.@odata.id", "value": "/ThermalSubsystem/" }
+    ]
+  },
+  {
+    "name": "test_thermalsubsystem_lists_leakdetection_link",
+    "description": "ThermalSubsystem advertises the nested LeakDetection resource so the deprecated tree is reachable by navigation",
+    "method": "GET",
+    "endpoint": "{{STATE.CHASSIS_URI}}/ThermalSubsystem",
+    "expected_status": 200,
+    "prerequisite_calls": [
+      {
+        "endpoint": "/redfish/v1/Chassis/",
+        "extract": { "CHASSIS_URI": "Members[0].@odata.id" }
+      }
+    ],
+    "validators": [
+      { "type": "exists",   "path": "LeakDetection.@odata.id" },
+      { "type": "contains", "path": "LeakDetection.@odata.id", "value": "/ThermalSubsystem/LeakDetection" }
     ]
   },
   {
@@ -71,7 +91,8 @@
       { "type": "exists", "path": "@odata.type" },
       { "type": "exists", "path": "LeakDetectors.@odata.id" },
       { "type": "exists", "path": "Status.State" },
-      { "type": "exists", "path": "Status.Health" }
+      { "type": "exists", "path": "Status.Health" },
+      { "type": "schema_conformance", "path": "$", "schema_file": "LeakDetection.v1_1_0.json", "definition": "LeakDetection" }
     ]
   },
   {
@@ -122,7 +143,8 @@
       { "type": "exists",     "path": "PhysicalContext" },
       { "type": "exists",     "path": "Status.State" },
       { "type": "exists",     "path": "Status.Health" },
-      { "type": "not_equals", "path": "DetectorState", "value": "LeakDetected" }
+      { "type": "not_equals", "path": "DetectorState", "value": "LeakDetected" },
+      { "type": "schema_conformance", "path": "$", "schema_file": "LeakDetector.v1_5_0.json", "definition": "LeakDetector" }
     ]
   },
   {
@@ -216,7 +238,8 @@
       { "type": "exists",     "path": "PhysicalContext" },
       { "type": "exists",     "path": "Status.State" },
       { "type": "exists",     "path": "Status.Health" },
-      { "type": "not_equals", "path": "DetectorState", "value": "LeakDetected" }
+      { "type": "not_equals", "path": "DetectorState", "value": "LeakDetected" },
+      { "type": "schema_conformance", "path": "$", "schema_file": "LeakDetector.v1_5_0.json", "definition": "LeakDetector" }
     ]
   },
   {
@@ -260,5 +283,17 @@
         ]
       }
     }
+  },
+  {
+    "name": "test_leak_schemas_served",
+    "description": "All three leak-detection JSON schemas are installed in the served set and discoverable via the JsonSchemaFile collection (so describedby links resolve)",
+    "method": "GET",
+    "endpoint": "/redfish/v1/JsonSchemas",
+    "expected_status": 200,
+    "validators": [
+      { "type": "contains_member", "path": "Members", "member_path": "@odata.id", "value": "/redfish/v1/JsonSchemas/LeakDetection" },
+      { "type": "contains_member", "path": "Members", "member_path": "@odata.id", "value": "/redfish/v1/JsonSchemas/LeakDetector" },
+      { "type": "contains_member", "path": "Members", "member_path": "@odata.id", "value": "/redfish/v1/JsonSchemas/LeakDetectorCollection" }
+    ]
   }
 ]

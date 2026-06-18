@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: SONiC Team <support@nexthop.ai>
+From: Chinmoy Dey <chinmoy@nexthop.ai>
 Date: Mon, 15 Jun 2026 00:00:00 +0000
 Subject: [PATCH 4/4] Integrate leak-detection handlers
 

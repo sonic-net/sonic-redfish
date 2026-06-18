@@ -47,9 +47,9 @@
 //   GET /redfish/v1/Chassis/<id>/ThermalSubsystem/LeakDetection/LeakDetectors/<detectorId>
 //
 // Schema versions emitted:
-//   #LeakDetection.v1_2_0.LeakDetection
+//   #LeakDetection.v1_1_0.LeakDetection
 //   #LeakDetectorCollection.LeakDetectorCollection
-//   #LeakDetector.v1_4_0.LeakDetector
+//   #LeakDetector.v1_5_0.LeakDetector
 //
 
 namespace redfish
@@ -75,7 +75,7 @@ inline void doLeakDetectionGet(
         boost::beast::http::field::link,
         "</redfish/v1/JsonSchemas/LeakDetection/LeakDetection.json>; rel=describedby");
     asyncResp->res.jsonValue["@odata.type"] =
-        "#LeakDetection.v1_2_0.LeakDetection";
+        "#LeakDetection.v1_1_0.LeakDetection";
     asyncResp->res.jsonValue["@odata.id"] = boost::urls::format(
         "/redfish/v1/Chassis/{}/ThermalSubsystem/LeakDetection", chassisId);
     asyncResp->res.jsonValue["Id"] = "LeakDetection";
