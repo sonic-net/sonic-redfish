@@ -1,6 +1,6 @@
 [wrap-git]
 url = https://github.com/NVIDIA/stdexec.git
-revision = main
+revision = fee4d651494014610a277540f209cae56011e47f
 depth = 1
 
 [provide]
