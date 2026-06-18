@@ -1,0 +1,63 @@
+# CodeQL security/quality analysis for sonic-redfish.
+# Analyzes the sources authored in this repo:
+#   - sonic-dbus-bridge (C++, in-tree under sonic-dbus-bridge/)
+#   - Python tooling / tests / scripts
+# For more information: https://github.com/github/codeql-action
+#
+# C/C++ uses CodeQL buildless analysis (build-mode: none) to start, so no
+# compilation/toolchain is required at this stage. The repo's normal build
+# runs inside Docker and cannot be traced by CodeQL autobuild; buildless
+# scanning gives static coverage without that dependency. A compiled (traced)
+# build mode can be added later if deeper analysis is wanted.
+
+name: "CodeQL"
+
+on:
+  push:
+    branches:
+      - 'master'
+      - '202[0-9][0-9][0-9]'
+  pull_request_target:
+    branches:
+      - 'master'
+      - '202[0-9][0-9][0-9]'
+  schedule:
+    # Weekly run (Mondays 07:13 UTC) to catch newly published CodeQL queries.
+    - cron: '13 7 * * 1'
+
+jobs:
+  analyze:
+    # Only run in the canonical sonic-net org (skips forks).
+    if: github.repository_owner == 'sonic-net'
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: python
+            build-mode: none
+          - language: c-cpp
+            build-mode: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Initializes the CodeQL tools for scanning.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          config-file: ./.github/codeql/codeql-config.yml
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

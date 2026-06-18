@@ -1,0 +1,19 @@
+# CodeQL configuration for sonic-redfish.
+# https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/customizing-your-advanced-setup-for-code-scanning
+
+name: "sonic-redfish CodeQL config"
+
+# Use the standard security + quality query suites.
+queries:
+  - uses: security-and-quality
+
+paths-ignore:
+  # Build artifacts and fetched upstream sources (not our code).
+  - 'bmcweb'
+  - '**/obj-*'
+  - '**/build'
+  - 'target'
+  - 'images'
+  # Tests and vendored meson subprojects.
+  - 'tests'
+  - '**/subprojects/packagecache'
