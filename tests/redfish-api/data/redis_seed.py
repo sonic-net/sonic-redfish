@@ -41,6 +41,10 @@ FIRMWARE = {
 
 CHASSIS_STATE = {"power_state": "on"}
 
+LEAK_SENSORS = {
+    "leak_sensor_1": {"state": "OK", "type": "Moisture", "present": "true"},
+}
+
 
 def seed(host: str = "localhost", port: int = 6379) -> None:
     config_db = redis.StrictRedis(host=host, port=port, db=4,
@@ -57,6 +61,8 @@ def seed(host: str = "localhost", port: int = 6379) -> None:
     state_db.hset("CHASSIS_STATE|chassis0", mapping=CHASSIS_STATE)
     for name, fields in FIRMWARE.items():
         state_db.hset(f"BMC_FW_INVENTORY|{name}", mapping=fields)
+    for name, fields in LEAK_SENSORS.items():
+        state_db.hset(f"LEAK_SENSOR|{name}", mapping=fields)
 
     print("redis: test data seeded (CONFIG_DB=4, STATE_DB=6)")
 

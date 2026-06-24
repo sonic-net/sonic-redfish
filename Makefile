@@ -31,6 +31,7 @@ PATCHES_DIR := $(REPO_ROOT)/patches
 SCRIPTS_DIR := $(REPO_ROOT)/scripts
 BUILD_DIR := $(REPO_ROOT)/build
 TARGET_DIR := $(REPO_ROOT)/$(SONIC_REDFISH_TARGET)
+RMC_EVENTS_DIR := $(REPO_ROOT)/rmc-events
 SERIES_FILE := $(PATCHES_DIR)/series
 DEBIAN_DIR := $(BMCWEB_DIR)/debian
 
@@ -46,7 +47,7 @@ DOCKERFILE_BUILD := $(BUILD_DIR)/Dockerfile.build
 MAIN_TARGET := $(BMCWEB_BINARY)
 DERIVED_TARGETS := $(BRIDGE_BINARY)
 
-.PHONY: all build clean reset setup-bmcweb copy-patches apply-patches build-bmcweb build-bridge build-bmcweb-native build-bridge-native build-in-docker test unit-test help
+.PHONY: all build clean reset setup-bmcweb copy-patches copy-rmc-events apply-patches build-bmcweb build-bridge build-bmcweb-native build-bridge-native build-in-docker test unit-test help
 
 # Recipes in this Makefile share Docker images and the target/ directory, so
 # the top-level prereq chain (build → unit-test → test) must run sequentially.
@@ -118,7 +119,7 @@ build: $(DOCKERFILE_BUILD)
 		-v "$(REPO_ROOT):/workspace" \
 		-w /workspace \
 		-e SONIC_CONFIG_MAKE_JOBS=$(SONIC_CONFIG_MAKE_JOBS) \
-		$(DOCKER_BUILDER_IMAGE) \
+		$(DOCKER_BUILDER_IMAGE)\
 		bash -c "\
 			set -e; \
 			git config --global --add safe.directory /workspace; \
@@ -167,8 +168,22 @@ copy-patches: $(SERIES_FILE)
 	@# Note: Patches will create debian/ directory, so we only copy series file after patches are applied
 	@echo "  Patches will be applied from $(PATCHES_DIR)"
 
+# Copy rmc-events source files into bmcweb tree before patches are applied.
+# The integration patch (0003) wires these files into the bmcweb build but
+# does not contain the file contents -- they live in rmc-events/.
+copy-rmc-events: setup-bmcweb
+	@echo "Copying rmc-events sources into bmcweb tree..."
+	@if [ -d "$(RMC_EVENTS_DIR)" ]; then \
+		cp -v $(RMC_EVENTS_DIR)/lib/*.hpp $(BMCWEB_DIR)/redfish-core/lib/ 2>/dev/null || true; \
+		cp -v $(RMC_EVENTS_DIR)/include/*.hpp $(BMCWEB_DIR)/redfish-core/include/ 2>/dev/null || true; \
+		cp -v $(RMC_EVENTS_DIR)/src/*.cpp $(BMCWEB_DIR)/redfish-core/src/ 2>/dev/null || true; \
+		echo "  rmc-events files copied"; \
+	else \
+		echo "  No rmc-events directory found, skipping"; \
+	fi
+
 # Apply patches using series file
-apply-patches: setup-bmcweb
+apply-patches: setup-bmcweb copy-rmc-events
 	@echo "Applying patches from series file..."
 	@if [ ! -d "$(BMCWEB_DIR)" ]; then \
 		echo "Error: bmcweb directory not found"; \
@@ -302,6 +317,7 @@ build-bmcweb-native:
 	@mv $(REPO_ROOT)/bmcweb_*.changes $(TARGET_DIR)/ 2>/dev/null || true
 	@mv $(REPO_ROOT)/bmcweb_*.buildinfo $(TARGET_DIR)/ 2>/dev/null || true
 	@mv $(REPO_ROOT)/bmcweb_*.dsc $(TARGET_DIR)/ 2>/dev/null || true
+	@mv $(REPO_ROOT)/bmcweb_*.tar.gz $(TARGET_DIR)/ 2>/dev/null || true
 	@echo ""
 	@echo "========================================="
 	@echo "bmcweb build complete!"
@@ -510,9 +526,16 @@ clean:
 	@if [ -d "$(BMCWEB_DIR)" ]; then sudo chown -R $$(id -u):$$(id -g) $(BMCWEB_DIR) 2>/dev/null || true; fi
 	@sudo chown -R $$(id -u):$$(id -g) $(BRIDGE_DIR) 2>/dev/null || true
 
-	# Wipe bmcweb build state completely. With git, a hard reset + clean -fdx
-	# is exhaustive: reverts patched files and removes obj-*, debian/,
-	# subprojects/<wrapped-clones>, and anything else untracked or ignored.
+	# Clean host-owned files
+	@echo "Cleaning package artifacts..."
+	@rm -rf $(BMCWEB_DIR)/debian 2>/dev/null || true
+	@rm -rf $(BRIDGE_DIR)/build 2>/dev/null || true
+	@rm -f $(REPO_ROOT)/*.deb $(REPO_ROOT)/*.changes $(REPO_ROOT)/*.buildinfo $(REPO_ROOT)/*.dsc $(REPO_ROOT)/*.tar.gz 2>/dev/null || true
+	@echo "  Removed package artifacts from root directory"
+
+	# Reset bmcweb source to clean state (so patches can be reapplied)
+	# git clean -fd also removes rmc-events copies (untracked files)
+	@echo "Resetting bmcweb source to clean state..."
 	@if [ -d "$(BMCWEB_DIR)/.git" ]; then \
 		echo "Resetting bmcweb source tree..."; \
 		cd $(BMCWEB_DIR) && git reset --hard HEAD && git clean -ffdx; \

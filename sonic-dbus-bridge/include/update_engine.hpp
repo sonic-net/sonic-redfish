@@ -90,6 +90,7 @@ class UpdateEngine
     // Cached data for change detection
     std::optional<DeviceMetadata> cachedMetadata_;
     std::optional<ChassisState> cachedState_;
+    std::map<std::string, std::string> cachedLeakStates_;
 
     /**
      * @brief Poll timer handler

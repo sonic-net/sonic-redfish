@@ -60,6 +60,19 @@ class DBusExporter
      */
     bool updateObjects(const InventoryModel& model);
 
+    /**
+     * @brief Update a leak sensor's DetectorState on D-Bus
+     *
+     * Calls set_property() which emits a PropertiesChanged D-Bus signal,
+     * allowing bmcweb to generate Redfish events.
+     *
+     * @param sensorName Sensor name (e.g., "leak_sensor_1")
+     * @param newState New state string ("OK", "Warning", "Critical", etc.)
+     * @return true on success
+     */
+    bool updateLeakSensorState(const std::string& sensorName,
+                                const std::string& newState);
+
   private:
     sdbusplus::asio::object_server& inventoryServer_;
 
@@ -92,6 +105,19 @@ class DBusExporter
      * - xyz.openbmc_project.Software.Activation (Activation, RequestedActivation)
      */
     bool createFirmwareObjects(const std::vector<FirmwareVersionInfo>& versions);
+
+    /**
+     * @brief Create leak sensor D-Bus objects under /xyz/openbmc_project/sensors/leak/
+     *
+     * Creates one D-Bus object per leak sensor with:
+     * - xyz.openbmc_project.Inventory.Item.LeakDetector (Type, DetectorState)
+     * - xyz.openbmc_project.State.Decorator.OperationalStatus (Functional)
+     * - xyz.openbmc_project.Inventory.Item (Present, PrettyName)
+     *
+     * DetectorState is registered as a mutable property so that set_property()
+     * emits PropertiesChanged signals for bmcweb event monitoring.
+     */
+    bool createLeakSensorObjects(const std::vector<LeakSensorInfo>& sensors);
 };
 
 } // namespace sonic::dbus_bridge

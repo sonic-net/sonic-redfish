@@ -48,7 +48,12 @@ echo "  dbus-daemon ready (pid=$DBUS_PID)"
 # Redis
 # -----
 echo "Starting redis-server..."
-redis-server --daemonize yes --logfile "$LOG_DIR/redis.log" --loglevel warning
+# notify-keyspace-events KEA enables keyspace notifications (__keyspace@<db>__:<key>).
+# sonic-dbus-bridge subscribes to these to react to runtime STATE_DB changes (e.g.
+# LEAK_SENSOR state). Without it the bridge never sees writes made after startup,
+# so event-driven flows (leak detection events) never fire.
+redis-server --daemonize yes --logfile "$LOG_DIR/redis.log" --loglevel warning \
+    --notify-keyspace-events KEA
 
 for i in $(seq 1 30); do
     redis-cli ping 2>/dev/null | grep -q PONG && break
