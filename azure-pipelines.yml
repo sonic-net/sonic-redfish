@@ -1,0 +1,78 @@
+# SONiC Redfish Azure Pipelines definition
+# Builds Debian packages, runs unit tests, and runs Redfish integration tests.
+
+trigger:
+  branches:
+    include:
+    - master
+    - 202???
+
+pr:
+  branches:
+    include:
+    - master
+    - 202???
+
+variables:
+  - name: BUILD_BRANCH
+    ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
+      value: $(System.PullRequest.TargetBranch)
+    ${{ else }}:
+      value: $(Build.SourceBranchName)
+
+stages:
+- stage: BuildAndTest
+  displayName: "Build And Test"
+  jobs:
+  - job: build_test_package
+    displayName: "Build"
+    timeoutInMinutes: 180
+
+    pool:
+      name: sonicso1ES-amd64
+
+    steps:
+    - checkout: self
+      clean: true
+      submodules: recursive
+      displayName: "Checkout code"
+
+    - script: |
+        set -euo pipefail
+        docker --version
+      displayName: "Validate Docker availability"
+
+    - script: |
+        set -euo pipefail
+        make SONIC_CONFIG_MAKE_JOBS=$(nproc) build
+      displayName: "Build Debian packages"
+
+    - script: |
+        set -euo pipefail
+        make unit-test
+      displayName: "Run C++ unit tests"
+
+    - script: |
+        set -euo pipefail
+        make test
+      displayName: "Run Redfish integration tests"
+
+    - task: PublishPipelineArtifact@1
+      displayName: "Publish Debian artifacts"
+      condition: always()
+      inputs:
+        targetPath: $(System.DefaultWorkingDirectory)/target/debs/trixie
+        artifact: sonic-redfish-debs
+
+    - task: PublishPipelineArtifact@1
+      displayName: "Publish test report log"
+      condition: always()
+      inputs:
+        targetPath: $(System.DefaultWorkingDirectory)/test_report.log
+        artifact: sonic-redfish-test-log
+
+    - script: |
+        set -euo pipefail
+        make clean-debug || true
+      displayName: "Cleanup test debug container"
+      condition: always()
