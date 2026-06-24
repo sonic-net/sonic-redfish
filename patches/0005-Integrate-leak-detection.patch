@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chinmoy Dey <chinmoy@nexthop.ai>
+Date: Mon, 15 Jun 2026 00:00:00 +0000
+Subject: [PATCH 4/4] Integrate leak-detection handlers
+
+Register the standard DMTF LeakDetection / LeakDetectorCollection /
+LeakDetector route handlers.
+
+These resources are NOT a SONiC OEM extension -- they implement standard
+Redfish schemas that upstream bmcweb bundles but does not serve. The
+handler source lives at the repo root (leak_detection/) and is copied
+into bmcweb at build time by the Makefile (copy-leak-detection target).
+This patch only wires it into route registration, independently of the
+SONiC OEM integration (patch 0003):
+
+ * redfish.cpp: include leak_detection/leak_detection.hpp and call
+   requestRoutesLeakDetection()
+
+Routes added:
+ - GET /redfish/v1/Chassis/<id>/ThermalSubsystem/LeakDetection
+ - GET /redfish/v1/Chassis/<id>/LeakDetectors[/<detectorId>]            (canonical)
+ - GET /redfish/v1/Chassis/<id>/ThermalSubsystem/LeakDetection/LeakDetectors[/<detectorId>] (deprecated)
+---
+ redfish-core/src/redfish.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/redfish-core/src/redfish.cpp b/redfish-core/src/redfish.cpp
+index abcdef3..1234569 100644
+--- a/redfish-core/src/redfish.cpp
++++ b/redfish-core/src/redfish.cpp
+@@ -20,6 +20,7 @@
+ #include "fabric_ports.hpp"
+ #include "fan.hpp"
+ #include "hypervisor_system.hpp"
++#include "leak_detection/leak_detection.hpp"
+ #include "log_services.hpp"
+ #include "manager_diagnostic_data.hpp"
+ #include "manager_logservices_dbus_eventlog.hpp"
+@@ -247,5 +248,7 @@ RedfishService::RedfishService(App& app)
+     requestRoutesRedfish(app);
+
+     requestRoutesOpenBmcManager(*this);
+
++    requestRoutesLeakDetection(app);
++
+     validate();
+--
+2.34.1
