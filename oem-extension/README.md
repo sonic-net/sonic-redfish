@@ -32,9 +32,14 @@ POST /redfish/v1/Managers/<id>/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemet
 ```
 
 bmcweb validates and forwards the JSON body verbatim over D-Bus to
-`sonic-dbus-bridge`, which walks a declarative field-mapping table
+`sonic-dbus-bridge`, which walks a declarative sensor-rule table
 (`sonic-dbus-bridge/include/field_mapping.hpp`) to persist the data as
-`HSET` commands into Redis **STATE_DB** (db index 6).
+`HSET` commands into Redis **STATE_DB** (db index 6). Each recognised
+measurement / leak entry fans out into its own per-sensor key
+(`RACK_MANAGER_DATA|<SensorName>` for telemetry,
+`RACK_MANAGER_ALERT|<SensorName>` for alerts), matching the platform DB
+schema (see the SONiC platform design doc,
+[pmon-bmc-design.md - DB schema](https://github.com/sonic-net/SONiC/blob/master/doc/bmc/sonicBMC/pmon-bmc-design.md#2121-db-schema)).
 
 <sub>[^ Back to Table of Contents](#table-of-contents)</sub>
 
@@ -42,13 +47,14 @@ bmcweb validates and forwards the JSON body verbatim over D-Bus to
 
 ## 2. Body envelopes at a glance
 
-| Action            | Top-level key | Notes                                                  |
-| ----------------- | ------------- | ------------------------------------------------------ |
-| `SubmitAlert`     | `Redfish`     | Open map. alert-type-name -> `AlertEntry` or wrapper.   |
-| `SubmitTelemetry` | `Alarms`      | Open map. sensor flags + scalars + deviation blocks.   |
+| Action            | Top-level envelope key | Notes                                                                       |
+| ----------------- | ---------------------- | --------------------------------------------------------------------------- |
+| `SubmitAlert`     | `redfish.*`            | Case-sensitive pattern (e.g. `redfish_alert_data`). Open map of alert blocks.|
+| `SubmitTelemetry` | `.*Alarms.*`           | Pattern (e.g. `Alarms`, `SystemAlarms`). Open map of measurement/leak blocks.|
 
-> **Note:** bmcweb returns `400 PropertyMissing` if the expected envelope
-> key is absent.
+> **Note:** bmcweb returns `400 PropertyMissing` if no top-level key matches
+> the expected envelope pattern. More than one matching envelope may be
+> present; each is walked independently and their writes merge.
 
 <sub>[^ Back to Table of Contents](#table-of-contents)</sub>
 
@@ -62,8 +68,8 @@ bmcweb validates and forwards the JSON body verbatim over D-Bus to
 2. **`RackManager`** - the OEM sub-resource (its own `@odata.id`).
 3. **`SubmitAlert`** - the alert POST action (descriptor + parameters).
 4. **`AlertEntry`** - the per-alert entry shape. `Severity` is required;
-   `RscmPosition` is optional because the wrapped form (see below) puts it
-   on the parent.
+   `RscmPosition` is optional and accepted for forward compatibility, but it
+   is **not** persisted under the doc-aligned DB schema.
 5. **`SubmitTelemetry`** - the telemetry POST action.
 6. **`Alarms`** - the telemetry payload container (open).
 7. **`SonicSeverity`** - the severity enum used throughout
@@ -83,11 +89,11 @@ the `properties` block (`target`, `title`) describes how the action is
 
 | Where in the JSON body              | Schema definition (`#/definitions/...`) | Required | Open map? | Notes                                                                                                  |
 | ----------------------------------- | --------------------------------------- | -------- | --------- | ------------------------------------------------------------------------------------------------------ |
-| `SubmitAlert` body root             | `SubmitAlert.parameters`                | yes      | n/a       | Body must contain the `Redfish` parameter.                                                             |
-| `SubmitAlert` -> `Redfish`          | `SubmitAlert.parameters.Redfish`        | yes      | yes       | Container keyed by alert-type name; values are `AlertEntry` or a wrapper (e.g. `ShutdownAlert`).       |
-| Each alert entry (flat or nested)   | `AlertEntry`                            | yes      | yes       | `Severity` required. `RscmPosition` lives on the entry (flat) or on the wrapper (nested).              |
-| `SubmitTelemetry` body root         | `SubmitTelemetry.parameters`            | yes      | n/a       | Body must contain the `Alarms` parameter.                                                              |
-| `SubmitTelemetry` -> `Alarms`       | `Alarms`                                | yes      | yes       | Open object; field set is defined by the bridge's `field_mapping.hpp`, not enumerated in this schema.  |
+| `SubmitAlert` body root             | `SubmitAlert.parameters`                | yes      | n/a       | Body must contain a key matching the `redfish.*` envelope pattern.                                     |
+| `SubmitAlert` -> `redfish.*`        | `SubmitAlert.parameters.redfish`        | yes      | yes       | Container keyed by alert-type name; values are `AlertEntry` or a wrapper (e.g. `ShutdownAlert`).       |
+| Each alert entry (flat or nested)   | `AlertEntry`                            | yes      | yes       | `Severity` required (inherited from the nearest enclosing object when absent on a leaf).               |
+| `SubmitTelemetry` body root         | `SubmitTelemetry.parameters`            | yes      | n/a       | Body must contain a key matching the `.*Alarms.*` envelope pattern.                                    |
+| `SubmitTelemetry` -> `.*Alarms.*`   | `Alarms`                                | yes      | yes       | Open object; field set is defined by the bridge's `field_mapping.hpp`, not enumerated in this schema.  |
 | `Severity` value anywhere           | `SonicSeverity`                         | -        | -         | Enum: `Normal` / `Minor` / `Major` / `Critical`.                                                       |
 
 > **Open map** (`additionalProperties: true`) means the schema deliberately
@@ -108,35 +114,30 @@ the resulting **Redis STATE_DB** state.
 
 ### 4.1. SubmitAlert - flat form
 
-The `Redfish` envelope holds one entry per alert type. Each entry must
-carry `Severity` (one of `Normal` / `Minor` / `Major` / `Critical`) and,
-in this form, `RscmPosition`. Type-specific fields (`FlowRate`,
-`LiquidPressure`, `InletTemperature`, ...) sit alongside.
+The `redfish.*` envelope holds one block per alert type. `Severity` (one of
+`Normal` / `Minor` / `Major` / `Critical`) is inherited from the nearest
+enclosing object when absent on a leaf. Measurement fields (`FlowRate`,
+`LiquidPressure`, `InletTemperature`, ...) are classified by a
+case-insensitive trailing-name match and fan out to canonical per-sensor
+keys. Leak entries (`*Leak*`) collapse into the single `Rack_level_leak`
+record. `RscmPosition` is accepted but not persisted.
 
 **Request**
 
 ```json
 POST /redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert
 {
-  "Redfish": {
+  "redfish_alert_data": {
     "Alerts": {
       "InletTemperature": 18,
       "FlowRate": 58,
-      "Severity": "Minor",
-      "RscmPosition": 1
+      "Severity": "Minor"
     },
     "LiquidPressureDeviation": {
       "LiquidPressure": 68,
-      "Severity": "Major",
-      "RscmPosition": 1
+      "Severity": "Major"
     },
-    "InletTemperatureDeviation": {
-      "InletTemperature": 46,
-      "Severity": "Critical",
-      "RscmPosition": 1
-    },
-    "LeakDetected":  { "Severity": "Critical", "RscmPosition": 1 },
-    "LeakRopeBreak": { "Severity": "Critical", "RscmPosition": 1 }
+    "LeakDetected": { "Severity": "Critical" }
   }
 }
 ```
@@ -149,57 +150,53 @@ HTTP/1.1 204 No Content
 
 **Redis STATE_DB after the POST**
 
-Each alert-type entry lands under its own `RSCM_ALERT|<name>` hash:
+Each measurement / leak fans out into its own canonical
+`RACK_MANAGER_ALERT|<SensorName>` hash. An alert record stores only
+`severity` and `timestamp` (a leak record stores `leak` and `timestamp`):
 
 ```text
-HGETALL RSCM_ALERT|Alerts
-  severity          = "Minor"
-  rscm_position     = "1"
-  inlet_temperature = "18"
-  flow_rate         = "58"
+HGETALL RACK_MANAGER_ALERT|Inlet_liquid_temperature
+  severity  = "Minor"
+  timestamp = "2026-01-01T00:00:00.000000Z"
 
-HGETALL RSCM_ALERT|LiquidPressureDeviation
-  severity        = "Major"
-  rscm_position   = "1"
-  liquid_pressure = "68"
+HGETALL RACK_MANAGER_ALERT|Inlet_liquid_flow_rate
+  severity  = "Minor"
+  timestamp = "2026-01-01T00:00:00.000000Z"
 
-HGETALL RSCM_ALERT|InletTemperatureDeviation
-  severity          = "Critical"
-  rscm_position     = "1"
-  inlet_temperature = "46"
+HGETALL RACK_MANAGER_ALERT|Inlet_liquid_pressure
+  severity  = "Major"
+  timestamp = "2026-01-01T00:00:00.000000Z"
 
-HGETALL RSCM_ALERT|LeakDetected
-  severity      = "Critical"
-  rscm_position = "1"
-
-HGETALL RSCM_ALERT|LeakRopeBreak
-  severity      = "Critical"
-  rscm_position = "1"
+HGETALL RACK_MANAGER_ALERT|Rack_level_leak
+  leak      = "Critical"
+  timestamp = "2026-01-01T00:00:00.000000Z"
 ```
 
-> **Note:** the key `Alerts` *inside* `Redfish` is an alert-type name
-> (the combined inlet-temperature + flow-rate alert) - it is not an
-> envelope.
+> **Note:** the key `Alerts` *inside* `redfish_alert_data` is just an
+> alert-type wrapper - its two numeric leaves (`InletTemperature`,
+> `FlowRate`) inherit `Severity` from it and resolve to two distinct
+> per-sensor keys.
 
 ### 4.2. SubmitAlert - ShutdownAlert wrapped form
 
 `ShutdownAlert` groups multiple leaf alerts under one wrapper that owns a
-single `RscmPosition`. Leaf alerts in this form carry only `Severity` and
-their type-specific fields.
+single `Severity`. Leaf alerts that omit `Severity` inherit it from the
+wrapper. Nesting depth and wrapper key names do not matter - each leaf is
+classified by its own measurement / leak name and resolves to the same
+canonical per-sensor key as the flat form.
 
 **Request**
 
 ```json
 POST /redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert
 {
-  "Redfish": {
+  "redfish_alert_data": {
     "ShutdownAlert": {
-      "FlowRateDeviation":       { "FlowRate": 58,        "Severity": "Minor"    },
-      "TempDeviation":           { "InletTemperature": 17,"Severity": "Normal"   },
-      "LiquidPressureDeviation": { "LiquidPressure": 68,  "Severity": "Major"    },
+      "FlowRateDeviation":       { "FlowRate": 58 },
+      "TempDeviation":           { "InletTemperature": 17 },
+      "LiquidPressureDeviation": { "LiquidPressure": 68 },
       "LeakDetected":            { "Severity": "Critical" },
-      "LeakRopeBreak":           { "Severity": "Critical" },
-      "RscmPosition": 3
+      "Severity": "Major"
     }
   }
 }
@@ -213,36 +210,40 @@ HTTP/1.1 204 No Content
 
 **Redis STATE_DB after the POST**
 
-The wrapper's `RscmPosition` lands on its own hash; each leaf gets a
-child key:
+The wrapper's `Severity` (`Major`) is inherited by every leaf that omits
+its own; `LeakDetected` keeps its `Critical`. The resulting per-sensor
+keys are identical in shape to the flat form:
 
 ```text
-HGETALL RSCM_ALERT|ShutdownAlert
-  rscm_position = "3"
+HGETALL RACK_MANAGER_ALERT|Inlet_liquid_flow_rate
+  severity  = "Major"
+  timestamp = "2026-01-01T00:00:00.000000Z"
 
-HGETALL RSCM_ALERT|ShutdownAlert|FlowRateDeviation
-  severity  = "Minor"
-  flow_rate = "58"
+HGETALL RACK_MANAGER_ALERT|Inlet_liquid_temperature
+  severity  = "Major"
+  timestamp = "2026-01-01T00:00:00.000000Z"
 
-HGETALL RSCM_ALERT|ShutdownAlert|TempDeviation
-  severity          = "Normal"
-  inlet_temperature = "17"
+HGETALL RACK_MANAGER_ALERT|Inlet_liquid_pressure
+  severity  = "Major"
+  timestamp = "2026-01-01T00:00:00.000000Z"
 
-HGETALL RSCM_ALERT|ShutdownAlert|LiquidPressureDeviation
-  severity        = "Major"
-  liquid_pressure = "68"
-
-HGETALL RSCM_ALERT|ShutdownAlert|LeakDetected
-  severity = "Critical"
-
-HGETALL RSCM_ALERT|ShutdownAlert|LeakRopeBreak
-  severity = "Critical"
+HGETALL RACK_MANAGER_ALERT|Rack_level_leak
+  leak      = "Critical"
+  timestamp = "2026-01-01T00:00:00.000000Z"
 ```
 
-> **Note:** Readers should join the wrapper hash with each leaf hash to
-> recover the full context of a wrapped alert.
+> **Note:** the wrapper key (`ShutdownAlert`) is not encoded in the Redis
+> key - only the canonical sensor name is. Severity inheritance is the
+> only context that survives.
 
 ### 4.3. SubmitTelemetry
+
+Telemetry is walked exactly like alerts: measurement leaves are classified
+by their trailing field name, leaks collapse into `Rack_level_leak`, and
+`Severity` inherits from the nearest enclosing object. Unlike alerts, a
+telemetry measurement record also stores the measured `value` (the
+temperature record names this field `InletTemperature`) and its `unit`.
+Keys not matching a sensor rule are silently dropped.
 
 **Request**
 
@@ -250,24 +251,10 @@ HGETALL RSCM_ALERT|ShutdownAlert|LeakRopeBreak
 POST /redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry
 {
   "Alarms": {
-    "EnergyValveActive":       true,
-    "EnergyValvePresent":      true,
-    "FlowrateSensorActive":    true,
-    "PressureSensorActive":    true,
-    "TemperatureSensorActive": true,
     "InletTempDeviation":      { "InletTemperature": 16.87, "Severity": "Normal"   },
     "FlowRateDeviation":       { "FlowRate": 28,            "Severity": "Normal"   },
     "LiquidPressureDeviation": { "LiquidPressure": 2,       "Severity": "Critical" },
-    "LeakDetected": {
-      "LeakDetected":  false,
-      "LeakRopeBreak": false,
-      "Severity":      "Normal"
-    },
-    "ThresholdConfigVersion": "03.03",
-    "GlycolConcentration":    0.0,
-    "ErrorState":             "0",
-    "RscmPosition":           3,
-    "ConfigFileCorrupted":    false
+    "LeakDetected":            { "Severity": "Critical" }
   }
 }
 ```
@@ -280,30 +267,31 @@ HTTP/1.1 204 No Content
 
 **Redis STATE_DB after the POST**
 
-All telemetry lands in a single Redis hash, `RSCM_TELEMETRY|alarms`, with
-one field per mapping-table row:
+Each measurement / leak fans out into its own canonical
+`RACK_MANAGER_DATA|<SensorName>` hash:
 
 ```text
-HGETALL RSCM_TELEMETRY|alarms
-  energy_valve_active                  = "true"
-  energy_valve_present                 = "true"
-  flowrate_sensor_active               = "true"
-  pressure_sensor_active               = "true"
-  temperature_sensor_active            = "true"
-  inlet_temp_deviation_temperature     = "16.87"
-  inlet_temp_deviation_severity        = "Normal"
-  flow_rate_deviation_flow_rate        = "28"
-  flow_rate_deviation_severity         = "Normal"
-  liquid_pressure_deviation_pressure   = "2"
-  liquid_pressure_deviation_severity   = "Critical"
-  leak_detected                        = "false"
-  leak_rope_break                      = "false"
-  leak_detected_severity               = "Normal"
-  threshold_config_version             = "03.03"
-  glycol_concentration                 = "0"
-  error_state                          = "0"
-  rscm_position                        = "3"
-  config_file_corrupted                = "false"
+HGETALL RACK_MANAGER_DATA|Inlet_liquid_temperature
+  InletTemperature = "16.870000"
+  unit             = "C"
+  severity         = "Normal"
+  timestamp        = "2026-01-01T00:00:00.000000Z"
+
+HGETALL RACK_MANAGER_DATA|Inlet_liquid_flow_rate
+  value     = "28"
+  unit      = "gallons_per_min"
+  severity  = "Normal"
+  timestamp = "2026-01-01T00:00:00.000000Z"
+
+HGETALL RACK_MANAGER_DATA|Inlet_liquid_pressure
+  value     = "2"
+  unit      = "psi"
+  severity  = "Critical"
+  timestamp = "2026-01-01T00:00:00.000000Z"
+
+HGETALL RACK_MANAGER_DATA|Rack_level_leak
+  leak      = "Critical"
+  timestamp = "2026-01-01T00:00:00.000000Z"
 ```
 
 <sub>[^ Back to Table of Contents](#table-of-contents)</sub>
@@ -326,15 +314,15 @@ standard Redfish error envelope.
 
 ```http
 POST .../SONiC.SubmitAlert
-{ "NotRedfish": {} }
+{ "NotRedfishAlertData": {} }
 
 HTTP/1.1 400 Bad Request
 {
-  "Redfish@Message.ExtendedInfo": [
+  "redfish@Message.ExtendedInfo": [
     {
       "MessageId":   "Base.1.19.PropertyMissing",
-      "MessageArgs": ["Redfish"],
-      "Message":     "The property Redfish is a required property and must be included in the request."
+      "MessageArgs": ["redfish"],
+      "Message":     "The property redfish is a required property and must be included in the request."
     }
   ]
 }

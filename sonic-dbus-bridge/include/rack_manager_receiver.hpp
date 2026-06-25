@@ -130,12 +130,13 @@ class RackManagerReceiver
     /**
      * @brief Parse SubmitTelemetry JSON and recursively extract telemetry.
      *
-     * Walks the "Alarms" envelope, matching every scalar leaf by its trailing
-     * dotted path and flattening matches into the single TELEMETRY_KEY hash
-     * (see getTelemetryRules()).
+     * Processes every top-level key matching the ".*Alarms.*" envelope
+     * pattern, inheriting Severity from the nearest enclosing object, and fans
+     * matching measurement/leak entries out into per-sensor
+     * RACK_MANAGER_DATA|<name> writes (see getSensorRules()).
      *
-     * @return true on success; false on JSON parse failure or a missing
-     *         "Alarms" envelope.
+     * @return true on success; false on JSON parse failure or when no
+     *         ".*Alarms.*" envelope key is present.
      */
     bool buildTelemetryJob(const std::string& jsonStr, Job& out);
 
@@ -143,9 +144,9 @@ class RackManagerReceiver
      * @brief Parse SubmitAlert JSON and recursively extract canonical alerts.
      *
      * Processes every top-level key matching the fixed (case-sensitive)
-     * "redfish.*" envelope pattern, inheriting Severity / RscmPosition from
-     * the nearest enclosing object, and fans matching fields/entries out into
-     * RACK_MANAGER_ALERT|<name> writes (see getAlertRules()).
+     * "redfish.*" envelope pattern, inheriting Severity from the nearest
+     * enclosing object, and fans matching measurement/leak entries out into
+     * per-sensor RACK_MANAGER_ALERT|<name> writes (see getSensorRules()).
      *
      * @return true on success; false on JSON parse failure or when no
      *         "redfish.*" envelope key is present.

@@ -10,11 +10,16 @@
 #pragma once
 
 //
-// Declarative regex mapping tables for Rack Manager telemetry and alerts.
+// Declarative regex mapping table for Rack Manager telemetry and alerts.
+// A single SensorRule table maps a measurement-field / leak-entry name to the
+// canonical sensor name used in the STATE_DB key, matching the platform DB
+// schema (see pmon-bmc-design.md, section 2.1.2.1 "DB schema").  Both
+// SubmitTelemetry and SubmitAlert fan out into per-sensor keys:
+//   RACK_MANAGER_DATA|<SensorName>   (telemetry: value/unit/severity/timestamp)
+//   RACK_MANAGER_ALERT|<SensorName>  (alert: severity/timestamp)
 // Patterns are matched case-insensitively as whole-name matches against a
 // recursively-walked payload, so nesting depth and wrapper key names do not
-// matter.  Telemetry flattens every match into a single Redis hash; alerts
-// fan out into per-name RACK_MANAGER_ALERT|<name> keys.
+// matter.
 //
 
 #include <string>
@@ -23,89 +28,39 @@
 namespace sonic::dbus_bridge
 {
 
-enum class FieldType
-{
-    String,
-    Number,
-    Integer,
-    Boolean
-};
-
-// Canonical Redis hash key into which all telemetry matches are flattened.
-inline constexpr const char* TELEMETRY_KEY = "RSCM_TELEMETRY|alarms";
-
-struct TelemetryRule
-{
-    std::string pathPattern;   // Regex vs. a leaf's trailing dotted path.
-    std::string redisField;    // Flattened field name in TELEMETRY_KEY.
-    FieldType   type;          // Expected value type (for serialisation).
-};
-
-// Telemetry rules (input: SubmitTelemetry "Alarms" envelope).  Keep redisField
-// values unique and patterns mutually exclusive (first match wins).
-inline const std::vector<TelemetryRule>& getTelemetryRules()
-{
-    static const std::vector<TelemetryRule> rules = {
-        // --- Sensor status flags ---
-        {".*EnergyValveActive",       "energy_valve_active",       FieldType::Boolean},
-        {".*EnergyValvePresent",      "energy_valve_present",      FieldType::Boolean},
-        {".*FlowrateSensorActive",    "flowrate_sensor_active",    FieldType::Boolean},
-        {".*PressureSensorActive",    "pressure_sensor_active",    FieldType::Boolean},
-        {".*TemperatureSensorActive", "temperature_sensor_active", FieldType::Boolean},
-
-        // --- Inlet temperature deviation ---
-        {".*InletTempDeviation\\.InletTemperature", "inlet_temp_deviation_temperature", FieldType::Number},
-        {".*InletTempDeviation\\.Severity",         "inlet_temp_deviation_severity",    FieldType::String},
-
-        // --- Flow rate deviation ---
-        {".*FlowRateDeviation\\.FlowRate", "flow_rate_deviation_flow_rate", FieldType::Number},
-        {".*FlowRateDeviation\\.Severity", "flow_rate_deviation_severity",  FieldType::String},
-
-        // --- Liquid pressure deviation ---
-        {".*LiquidPressureDeviation\\.LiquidPressure", "liquid_pressure_deviation_pressure", FieldType::Number},
-        {".*LiquidPressureDeviation\\.Severity",       "liquid_pressure_deviation_severity", FieldType::String},
-
-        // --- Leak detection ---
-        {".*LeakDetected\\.LeakDetected",  "leak_detected",          FieldType::Boolean},
-        {".*LeakDetected\\.LeakRopeBreak", "leak_rope_break",        FieldType::Boolean},
-        {".*LeakDetected\\.Severity",      "leak_detected_severity", FieldType::String},
-
-        // --- General ---
-        {".*ThresholdConfigVersion", "threshold_config_version", FieldType::String},
-        {".*GlycolConcentration",    "glycol_concentration",     FieldType::Number},
-        {".*ErrorState",             "error_state",              FieldType::String},
-        {".*RscmPosition",           "rscm_position",            FieldType::Integer},
-        {".*ConfigFileCorrupted",    "config_file_corrupted",    FieldType::Boolean},
-    };
-    return rules;
-}
-
-// Canonical Redis key prefix for all alerts (STATE_DB).  Alerts arrive under a
-// top-level envelope key matching "redfish.*" (e.g. "redfish_alert_data") and
-// are matched by field/entry name; Severity / RscmPosition inherit from the
-// nearest enclosing object.
+// Canonical Redis key prefixes (STATE_DB) for the per-sensor records.
+inline constexpr const char* DATA_KEY_PREFIX  = "RACK_MANAGER_DATA|";
 inline constexpr const char* ALERT_KEY_PREFIX = "RACK_MANAGER_ALERT|";
 
-struct AlertRule
+enum class SensorKind
 {
-    std::string fieldPattern;  // Regex vs. JSON field/entry name.
-    std::string alertName;     // Canonical suffix -> RACK_MANAGER_ALERT|<alertName>
-    std::string unit;          // Measurement unit (empty for leak rules)
-    bool        isMeasurement; // true: numeric value+unit; false: stateful leak
+    Measurement,  // numeric leaf -> telemetry stores value+unit+severity+ts
+    Leak          // stateful entry -> stores leak(=severity)+timestamp
 };
 
-// Alert rules.  Keep patterns mutually exclusive (first match wins).
-inline const std::vector<AlertRule>& getAlertRules()
+struct SensorRule
 {
-    static const std::vector<AlertRule> rules = {
-        // --- Measurements (numeric fields; unified "value" field in Redis) ---
-        {".*InletTemperature", "Inlet_liquid_temperature", "C",               true},
-        {".*FlowRate",         "Inlet_liquid_flow_rate",   "gallons_per_min", true},
-        {".*LiquidPressure",   "Inlet_liquid_pressure",    "psi",             true},
+    std::string fieldPattern;  // Regex vs. JSON measurement-field / leak-entry name.
+    std::string sensorName;    // Canonical -> RACK_MANAGER_{DATA,ALERT}|<sensorName>
+    std::string unit;          // Telemetry measurement unit (empty for leak).
+    std::string valueField;    // Telemetry value field name (empty for leak).
+    SensorKind  kind;
+};
 
-        // --- Stateful leak alerts (object entries; severity only) ---
-        {".*LeakRopeBreak",    "leak_rope_break",          "",                false},
-        {".*LeakDetected",     "leak_detected",            "",                false},
+// Sensor rules aligned to the platform DB schema.  Keep patterns mutually
+// exclusive (first match wins) and sensorName values unique.  Per the doc the
+// telemetry temperature record names its value field "InletTemperature" while
+// flow-rate and pressure use the generic "value".
+inline const std::vector<SensorRule>& getSensorRules()
+{
+    static const std::vector<SensorRule> rules = {
+        // --- Measurements (numeric fields) ---
+        {".*InletTemperature", "Inlet_liquid_temperature", "C",               "InletTemperature", SensorKind::Measurement},
+        {".*FlowRate",         "Inlet_liquid_flow_rate",   "gallons_per_min", "value",            SensorKind::Measurement},
+        {".*LiquidPressure",   "Inlet_liquid_pressure",    "psi",             "value",            SensorKind::Measurement},
+
+        // --- Stateful leak (collapsed into a single Rack_level_leak record) ---
+        {".*Leak.*",           "Rack_level_leak",          "",                "",                 SensorKind::Leak},
     };
     return rules;
 }

@@ -223,8 +223,8 @@ The framework is JSON-driven; no Python is needed for the common cases
 
 When asserting on D-Bus state, prefer reading back through Redfish
 (end-to-end). Drop down to `redis_validations` only when the assertion
-is about state that Redfish doesn't surface (e.g. the raw
-`RSCM_TELEMETRY|alarms` hash after a `SubmitTelemetry` POST).
+is about state that Redfish doesn't surface (e.g. the per-sensor
+`RACK_MANAGER_DATA|<SensorName>` hashes after a `SubmitTelemetry` POST).
 
 ### 1.10. Debugging
 

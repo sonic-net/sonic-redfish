@@ -25,61 +25,55 @@ using RedisWrites =
     std::vector<std::tuple<std::string, std::string, std::string>>;
 
 // ---------------------------------------------------------------------------
-// Alert extraction helpers (SubmitAlert)
+// Unified sensor extraction (SubmitAlert + SubmitTelemetry)
+//
+// Both payloads are walked identically: each object node may carry a
+// "Severity" (inherited by descendants when absent) and either be a leak
+// entry (its own key matches the leak rule) or hold numeric measurement
+// leaves.  Matches fan out into per-sensor STATE_DB keys.  Telemetry stores
+// the full record (value/unit/severity/timestamp for a measurement,
+// leak/timestamp for a leak); an alert stores only severity/timestamp (or
+// leak/timestamp), matching the platform DB schema.
 // ---------------------------------------------------------------------------
 
-// Append a measurement alert (value + unit + severity + timestamp [+ rscm]).
-static void emitMeasurementAlert(const AlertRule& rule,
-                                 const Json::Value& measurement,
-                                 const std::string& severity,
-                                 const std::string& rscm,
-                                 const std::string& timestamp,
-                                 RedisWrites& writes)
+enum class ExtractMode
 {
-    const std::string key = std::string(ALERT_KEY_PREFIX) + rule.alertName;
-    writes.emplace_back(key, "value", numberToString(measurement));
-    if (!rule.unit.empty())
+    Telemetry,
+    Alert
+};
+
+// Resolve the effective severity for a node, defaulting to "Normal" (with a
+// WARN) when never supplied along the inheritance chain.
+static std::string effectiveSeverity(const std::string& severity,
+                                     bool severityFound,
+                                     const std::string& nodeKey)
+{
+    if (severityFound)
     {
-        writes.emplace_back(key, "unit", rule.unit);
+        return severity;
     }
-    writes.emplace_back(key, "severity", severity);
-    writes.emplace_back(key, "timestamp", timestamp);
-    if (!rscm.empty())
-    {
-        writes.emplace_back(key, "rscm_position", rscm);
-    }
+    LOG_WARNING("RackManagerReceiver: '%s' missing Severity; defaulting to "
+                "Normal (malformed JSON)", nodeKey.c_str());
+    return "Normal";
 }
 
-// Append a stateful leak alert (leak[=severity] + timestamp [+ rscm]).
-static void emitLeakAlert(const AlertRule& rule, const std::string& severity,
-                          const std::string& rscm,
-                          const std::string& timestamp, RedisWrites& writes)
-{
-    const std::string key = std::string(ALERT_KEY_PREFIX) + rule.alertName;
-    writes.emplace_back(key, "leak", severity);
-    writes.emplace_back(key, "timestamp", timestamp);
-    if (!rscm.empty())
-    {
-        writes.emplace_back(key, "rscm_position", rscm);
-    }
-}
-
-// Recursively walk the alert envelope.  Severity / RscmPosition inherit from
-// the nearest enclosing object when absent on a node; severity defaults to
-// "Normal" (with a WARN) when never supplied.  A node is treated as a leak
-// alert when its own key matches a leak rule; each numeric member is matched
-// against the measurement rules and fanned out independently.
-static void extractAlerts(const std::string& nodeKey, const Json::Value& node,
-                          const std::string& inheritedSeverity,
-                          bool severityFound, const std::string& inheritedRscm,
-                          const std::string& timestamp, RedisWrites& writes)
+// Recursively walk a payload envelope, fanning matches out into per-sensor
+// RACK_MANAGER_DATA / RACK_MANAGER_ALERT writes.  Severity inherits from the
+// nearest enclosing object when absent.  A node is treated as a leak record
+// when its own key matches the leak rule; each numeric member is matched
+// against the measurement rules and emitted independently (first-match-wins,
+// so rule patterns are kept mutually exclusive).
+static void extractSensors(const std::string& nodeKey, const Json::Value& node,
+                           const std::string& inheritedSeverity,
+                           bool severityFound, const std::string& timestamp,
+                           ExtractMode mode, RedisWrites& writes)
 {
     if (node.isArray())
     {
         for (const auto& elem : node)
         {
-            extractAlerts(nodeKey, elem, inheritedSeverity, severityFound,
-                          inheritedRscm, timestamp, writes);
+            extractSensors(nodeKey, elem, inheritedSeverity, severityFound,
+                           timestamp, mode, writes);
         }
         return;
     }
@@ -89,7 +83,7 @@ static void extractAlerts(const std::string& nodeKey, const Json::Value& node,
         return;
     }
 
-    // Resolve this object's effective context, inheriting when absent.
+    // Resolve this object's effective severity, inheriting when absent.
     std::string severity = inheritedSeverity;
     bool haveSeverity = severityFound;
     if (node.isMember("Severity") && node["Severity"].isString())
@@ -97,35 +91,28 @@ static void extractAlerts(const std::string& nodeKey, const Json::Value& node,
         severity = node["Severity"].asString();
         haveSeverity = true;
     }
-    std::string rscm = inheritedRscm;
-    if (node.isMember("RscmPosition"))
-    {
-        std::string r = rscmToString(node["RscmPosition"]);
-        if (!r.empty()) { rscm = r; }
-    }
 
-    const auto& rules = getAlertRules();
+    const std::string prefix =
+        (mode == ExtractMode::Telemetry) ? DATA_KEY_PREFIX : ALERT_KEY_PREFIX;
+    const auto& rules = getSensorRules();
 
-    // Is this object itself a stateful (leak) alert?
+    // Is this object itself a leak record?
     for (const auto& rule : rules)
     {
-        if (rule.isMeasurement || !matchesName(nodeKey, rule.fieldPattern))
+        if (rule.kind != SensorKind::Leak ||
+            !matchesName(nodeKey, rule.fieldPattern))
         {
             continue;
         }
-        std::string sev = severity;
-        if (!haveSeverity)
-        {
-            sev = "Normal";
-            LOG_WARNING("RackManagerReceiver: alert '%s' missing Severity; "
-                        "defaulting to Normal (malformed alert JSON)",
-                        nodeKey.c_str());
-        }
-        emitLeakAlert(rule, sev, rscm, timestamp, writes);
+        const std::string key = prefix + rule.sensorName;
+        const std::string sev =
+            effectiveSeverity(severity, haveSeverity, nodeKey);
+        writes.emplace_back(key, "leak", sev);
+        writes.emplace_back(key, "timestamp", timestamp);
         break;
     }
 
-    // Walk members: numeric leaves -> measurement alerts; objects -> recurse.
+    // Walk members: numeric leaves -> measurement records; objects -> recurse.
     for (const auto& name : node.getMemberNames())
     {
         if (name == "Severity" || name == "RscmPosition")
@@ -138,78 +125,30 @@ static void extractAlerts(const std::string& nodeKey, const Json::Value& node,
         {
             for (const auto& rule : rules)
             {
-                if (!rule.isMeasurement ||
+                if (rule.kind != SensorKind::Measurement ||
                     !matchesName(name, rule.fieldPattern))
                 {
                     continue;
                 }
-                std::string sev = severity;
-                if (!haveSeverity)
+                const std::string key = prefix + rule.sensorName;
+                const std::string sev =
+                    effectiveSeverity(severity, haveSeverity, name);
+                if (mode == ExtractMode::Telemetry)
                 {
-                    sev = "Normal";
-                    LOG_WARNING("RackManagerReceiver: alert '%s' missing "
-                                "Severity; defaulting to Normal (malformed "
-                                "alert JSON)", name.c_str());
+                    writes.emplace_back(key, rule.valueField,
+                                        numberToString(child));
+                    writes.emplace_back(key, "unit", rule.unit);
                 }
-                emitMeasurementAlert(rule, child, sev, rscm, timestamp,
-                                     writes);
-                break;
+                writes.emplace_back(key, "severity", sev);
+                writes.emplace_back(key, "timestamp", timestamp);
+                break;  // first-match-wins
             }
         }
         else if (child.isObject() || child.isArray())
         {
-            extractAlerts(name, child, severity, haveSeverity, rscm,
-                          timestamp, writes);
+            extractSensors(name, child, severity, haveSeverity, timestamp,
+                           mode, writes);
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Telemetry extraction helper (SubmitTelemetry)
-// ---------------------------------------------------------------------------
-
-// Recursively walk the telemetry envelope, building the trailing dotted path
-// of every scalar leaf (e.g. "InletTempDeviation.InletTemperature").  Each
-// leaf path is matched against getTelemetryRules(); the first matching rule
-// flattens the value into the single TELEMETRY_KEY hash under its field name
-// (first-match-wins, so rule patterns are kept mutually exclusive).
-static void extractTelemetry(const std::string& path, const Json::Value& node,
-                             RedisWrites& writes)
-{
-    if (node.isArray())
-    {
-        for (const auto& elem : node)
-        {
-            extractTelemetry(path, elem, writes);
-        }
-        return;
-    }
-
-    if (node.isObject())
-    {
-        for (const auto& name : node.getMemberNames())
-        {
-            const std::string childPath =
-                path.empty() ? name : path + "." + name;
-            extractTelemetry(childPath, node[name], writes);
-        }
-        return;
-    }
-
-    // Scalar leaf: resolve against the telemetry rules.
-    for (const auto& rule : getTelemetryRules())
-    {
-        if (!matchesName(path, rule.pathPattern))
-        {
-            continue;
-        }
-        std::string strVal = valueToString(node, rule.type);
-        if (!strVal.empty())
-        {
-            writes.emplace_back(TELEMETRY_KEY, rule.redisField,
-                                std::move(strVal));
-        }
-        break;  // first-match-wins
     }
 }
 
@@ -384,9 +323,9 @@ bool RackManagerReceiver::connectRedis()
 
 // ---------------------------------------------------------------------------
 // Parse SubmitTelemetry JSON and recursively extract canonical telemetry.
-// Field-driven (see getTelemetryRules()): every scalar leaf under the "Alarms"
-// envelope is matched by its trailing dotted path and flattened into the
-// single TELEMETRY_KEY hash.
+// Field-driven (see getSensorRules()): every top-level key matching the
+// ".*Alarms.*" envelope pattern is walked and its measurement/leak entries are
+// fanned out into per-sensor RACK_MANAGER_DATA|<name> records.
 // ---------------------------------------------------------------------------
 bool RackManagerReceiver::buildTelemetryJob(const std::string& jsonStr,
                                             Job& out)
@@ -402,27 +341,45 @@ bool RackManagerReceiver::buildTelemetryJob(const std::string& jsonStr,
         return false;
     }
 
-    constexpr const char* kEnvelope = "Alarms";
-    if (!root.isObject() || !root.isMember(kEnvelope))
+    constexpr const char* kEnvelopePattern = ".*Alarms.*";
+    if (!root.isObject())
     {
-        LOG_ERROR("RackManagerReceiver: telemetry missing '%s' envelope",
-                  kEnvelope);
+        LOG_ERROR("RackManagerReceiver: telemetry payload is not a JSON object");
         return false;
     }
 
-    extractTelemetry(/*path=*/"", root[kEnvelope], out.writes);
+    const std::string timestamp = isoUtcNow();
+    bool matchedEnvelope = false;
+    for (const auto& name : root.getMemberNames())
+    {
+        if (!matchesName(name, kEnvelopePattern, /*caseInsensitive=*/false))
+        {
+            continue;
+        }
+        matchedEnvelope = true;
+        extractSensors(name, root[name], /*inheritedSeverity=*/"",
+                       /*severityFound=*/false, timestamp,
+                       ExtractMode::Telemetry, out.writes);
+    }
+
+    if (!matchedEnvelope)
+    {
+        LOG_ERROR("RackManagerReceiver: telemetry missing a '%s' envelope key",
+                  kEnvelopePattern);
+        return false;
+    }
 
     if (out.writes.empty())
     {
         LOG_WARNING("RackManagerReceiver: SubmitTelemetry produced no "
-                    "recognised telemetry (no matching leaf paths)");
+                    "recognised telemetry (no matching measurement/leak fields)");
     }
     return true;
 }
 
 // ---------------------------------------------------------------------------
 // Parse SubmitAlert JSON and recursively extract canonical alerts.  Field-
-// driven (see getAlertRules()), so the same rule resolves an entry regardless
+// driven (see getSensorRules()), so the same rule resolves an entry regardless
 // of nesting depth or wrapper key name.  Every top-level key matching the
 // fixed (case-sensitive) "redfish.*" envelope pattern is processed as an
 // independent envelope; their alerts merge into one Redis write batch.
@@ -456,9 +413,9 @@ bool RackManagerReceiver::buildAlertJob(const std::string& jsonStr, Job& out)
             continue;
         }
         matchedEnvelope = true;
-        extractAlerts(name, root[name], /*inheritedSeverity=*/"",
-                      /*severityFound=*/false, /*inheritedRscm=*/"", timestamp,
-                      out.writes);
+        extractSensors(name, root[name], /*inheritedSeverity=*/"",
+                       /*severityFound=*/false, timestamp, ExtractMode::Alert,
+                       out.writes);
     }
 
     if (!matchedEnvelope)

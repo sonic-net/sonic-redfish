@@ -12,12 +12,11 @@
 //
 // Header-only helpers shared by the Rack Manager receiver's alert and
 // telemetry parsers.  These are pure, side-effect-free utilities (timestamp
-// formatting, Json::Value serialisation, whole-name regex matching) kept out
+// formatting, numeric value rendering, whole-name regex matching) kept out
 // of the translation unit so the parsing logic stays focused on the domain
 // rules.
 //
 
-#include "field_mapping.hpp"
 #include "logger.hpp"
 
 #include <json/json.h>
@@ -49,45 +48,11 @@ inline std::string isoUtcNow()
     return oss.str();
 }
 
-// Render a numeric Json::Value as the unified "value" string.
+// Render a numeric Json::Value as the telemetry value string.
 inline std::string numberToString(const Json::Value& val)
 {
     if (val.isDouble())   { return std::to_string(val.asDouble()); }
     if (val.isIntegral()) { return std::to_string(val.asInt64()); }
-    return "";
-}
-
-// Render an RscmPosition Json::Value as a string ("" when absent/invalid).
-inline std::string rscmToString(const Json::Value& val)
-{
-    if (val.isIntegral()) { return std::to_string(val.asInt64()); }
-    if (val.isString())   { return val.asString(); }
-    return "";
-}
-
-// Serialise a Json::Value to a string suitable for Redis storage, coercing
-// to the expected FieldType ("" when the value cannot be represented).
-inline std::string valueToString(const Json::Value& val, FieldType type)
-{
-    if (val.isNull())
-    {
-        return "";
-    }
-
-    switch (type)
-    {
-        case FieldType::String:
-            return val.isString() ? val.asString() : val.toStyledString();
-
-        case FieldType::Number:
-            return numberToString(val);
-
-        case FieldType::Integer:
-            return val.isIntegral() ? std::to_string(val.asInt64()) : "";
-
-        case FieldType::Boolean:
-            return val.isBool() ? (val.asBool() ? "true" : "false") : "";
-    }
     return "";
 }
 

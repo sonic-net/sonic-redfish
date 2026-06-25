@@ -21,144 +21,99 @@ namespace sonic::dbus_bridge::test {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// All telemetry matches flatten into this single Redis hash key.
-constexpr const char* TELEMETRY_REDIS_KEY = "RSCM_TELEMETRY|alarms";
-
-static bool isValidFieldType(FieldType t)
+// Resolve a field/entry name to its canonical sensor name ("" if no rule
+// matches), restricted to a given SensorKind.  Mirrors the receiver's
+// whole-name, case-insensitive regex match.
+static std::string resolveSensor(const std::string& name, SensorKind kind)
 {
-    switch (t)
+    for (const auto& r : getSensorRules())
     {
-        case FieldType::String:
-        case FieldType::Number:
-        case FieldType::Integer:
-        case FieldType::Boolean:
-            return true;
+        if (r.kind != kind) { continue; }
+        std::regex re(r.fieldPattern, std::regex::icase);
+        if (std::regex_match(name, re)) { return r.sensorName; }
     }
-    return false;
+    return "";
 }
 
 // ---------------------------------------------------------------------------
-// Table stability
+// Table stability / non-emptiness
 // ---------------------------------------------------------------------------
 
-TEST(FieldMappingTables, ReturnSameStaticInstanceAcrossCalls)
+TEST(SensorRuleTable, ReturnsSameStaticInstanceAcrossCalls)
 {
-    EXPECT_EQ(&getTelemetryRules(), &getTelemetryRules());
-    EXPECT_EQ(&getAlertRules(), &getAlertRules());
+    EXPECT_EQ(&getSensorRules(), &getSensorRules());
 }
 
-TEST(FieldMappingTables, BothTablesAreNonEmpty)
+TEST(SensorRuleTable, IsNonEmpty)
 {
-    EXPECT_FALSE(getTelemetryRules().empty());
-    EXPECT_FALSE(getAlertRules().empty());
+    EXPECT_FALSE(getSensorRules().empty());
 }
 
 // ---------------------------------------------------------------------------
-// Entry-level invariants (apply to every row in every table)
+// Key prefixes match the platform DB schema.
 // ---------------------------------------------------------------------------
 
-// Every telemetry rule must carry a non-empty pattern + flattened field, a
-// compilable regex, a space/pipe-free Redis field, and a valid value type.
-TEST(FieldMappingTables, TelemetryEntriesSatisfyInvariants)
+TEST(SensorRuleTable, KeyPrefixesAreCanonical)
 {
-    for (const auto& r : getTelemetryRules())
+    EXPECT_STREQ(DATA_KEY_PREFIX, "RACK_MANAGER_DATA|");
+    EXPECT_STREQ(ALERT_KEY_PREFIX, "RACK_MANAGER_ALERT|");
+}
+
+// ---------------------------------------------------------------------------
+// Entry-level invariants (apply to every row).
+// ---------------------------------------------------------------------------
+
+// Every rule must carry a non-empty pattern + canonical name, a compilable
+// regex, a space/pipe-free sensor name, and unit/valueField iff measurement.
+TEST(SensorRuleTable, EntriesSatisfyInvariants)
+{
+    for (const auto& r : getSensorRules())
     {
-        const std::string ctx = "telemetry[" + r.redisField + "]";
-        EXPECT_FALSE(r.pathPattern.empty()) << ctx << ": empty pathPattern";
-        EXPECT_FALSE(r.redisField.empty())  << ctx << ": empty redisField";
-
-        // redisField becomes a hash field in TELEMETRY_KEY; spaces/pipes
-        // would corrupt the flattened hash.
-        EXPECT_EQ(r.redisField.find(' '), std::string::npos)
-            << ctx << ": redisField contains a space";
-        EXPECT_EQ(r.redisField.find('|'), std::string::npos)
-            << ctx << ": redisField contains a '|'";
-
-        // Pattern must be a valid regex (the receiver compiles it icase).
-        EXPECT_NO_THROW({ std::regex re(r.pathPattern, std::regex::icase);
-                          (void)re; })
-            << ctx << ": pathPattern is not a valid regex";
-
-        EXPECT_TRUE(isValidFieldType(r.type)) << ctx << ": invalid FieldType";
-    }
-}
-
-// Every alert rule must carry a non-empty pattern + canonical name, a
-// compilable regex, and a unit iff it is a measurement rule.
-TEST(FieldMappingTables, AlertRulesSatisfyInvariants)
-{
-    for (const auto& r : getAlertRules())
-    {
-        const std::string ctx = "alert[" + r.alertName + "]";
+        const std::string ctx = "sensor[" + r.sensorName + "]";
         EXPECT_FALSE(r.fieldPattern.empty()) << ctx << ": empty fieldPattern";
-        EXPECT_FALSE(r.alertName.empty())    << ctx << ": empty alertName";
+        EXPECT_FALSE(r.sensorName.empty())   << ctx << ": empty sensorName";
 
-        // alertName becomes the Redis key suffix; spaces/pipes would corrupt
-        // the RACK_MANAGER_ALERT|<name> key.
-        EXPECT_EQ(r.alertName.find(' '), std::string::npos)
-            << ctx << ": alertName contains a space";
-        EXPECT_EQ(r.alertName.find('|'), std::string::npos)
-            << ctx << ": alertName contains a '|'";
+        // sensorName becomes the Redis key suffix; spaces/pipes would corrupt
+        // the RACK_MANAGER_{DATA,ALERT}|<name> key.
+        EXPECT_EQ(r.sensorName.find(' '), std::string::npos)
+            << ctx << ": sensorName contains a space";
+        EXPECT_EQ(r.sensorName.find('|'), std::string::npos)
+            << ctx << ": sensorName contains a '|'";
 
         // Pattern must be a valid regex (the receiver compiles it icase).
         EXPECT_NO_THROW({ std::regex re(r.fieldPattern, std::regex::icase);
                           (void)re; })
             << ctx << ": fieldPattern is not a valid regex";
 
-        if (r.isMeasurement)
+        if (r.kind == SensorKind::Measurement)
         {
             EXPECT_FALSE(r.unit.empty())
                 << ctx << ": measurement rule must define a unit";
+            EXPECT_FALSE(r.valueField.empty())
+                << ctx << ": measurement rule must define a value field";
         }
         else
         {
             EXPECT_TRUE(r.unit.empty())
                 << ctx << ": leak rule must not define a unit";
+            EXPECT_TRUE(r.valueField.empty())
+                << ctx << ": leak rule must not define a value field";
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Redis key namespacing -- telemetry vs alert tables are kept distinct
-// to prevent cross-table collisions in STATE_DB.
+// Duplicate detection: two rows must never resolve to the same canonical
+// sensor name; a later HSET would clobber the earlier sensor's hash.
 // ---------------------------------------------------------------------------
 
-TEST(FieldMappingTables, TelemetryKeyIsCanonical)
-{
-    EXPECT_STREQ(TELEMETRY_KEY, TELEMETRY_REDIS_KEY);
-}
-
-TEST(FieldMappingTables, AlertKeyPrefixIsCanonical)
-{
-    EXPECT_STREQ(ALERT_KEY_PREFIX, "RACK_MANAGER_ALERT|");
-}
-
-// ---------------------------------------------------------------------------
-// Duplicate detection: two rows must never target the same (key, field) --
-// the second HSET would silently overwrite the first.
-// ---------------------------------------------------------------------------
-
-// Two telemetry rules must never target the same flattened field; the second
-// HSET would silently overwrite the first within TELEMETRY_KEY.
-TEST(FieldMappingTables, NoDuplicateRedisTargetsInTelemetry)
+TEST(SensorRuleTable, NoDuplicateSensorNames)
 {
     std::set<std::string> seen;
-    for (const auto& r : getTelemetryRules())
+    for (const auto& r : getSensorRules())
     {
-        EXPECT_TRUE(seen.emplace(r.redisField).second)
-            << "telemetry: duplicate redisField '" << r.redisField << "'";
-    }
-}
-
-// Two rules must never resolve to the same canonical alert name; a later
-// HSET would clobber the earlier alert's hash.
-TEST(FieldMappingTables, NoDuplicateAlertNames)
-{
-    std::set<std::string> seen;
-    for (const auto& r : getAlertRules())
-    {
-        EXPECT_TRUE(seen.emplace(r.alertName).second)
-            << "duplicate alertName: " << r.alertName;
+        EXPECT_TRUE(seen.emplace(r.sensorName).second)
+            << "duplicate sensorName: " << r.sensorName;
     }
 }
 
@@ -167,89 +122,46 @@ TEST(FieldMappingTables, NoDuplicateAlertNames)
 // regex match so the canonical mapping is locked down by tests.
 // ---------------------------------------------------------------------------
 
-// Resolve a field/entry name to its canonical alert name ("" if no rule
-// matches), restricted to measurement or leak rules per `measurement`.
-static std::string resolveAlert(const std::string& name, bool measurement)
+TEST(SensorMatching, MeasurementFieldsResolveRegardlessOfPrefixOrCase)
 {
-    for (const auto& r : getAlertRules())
-    {
-        if (r.isMeasurement != measurement) { continue; }
-        std::regex re(r.fieldPattern, std::regex::icase);
-        if (std::regex_match(name, re)) { return r.alertName; }
-    }
-    return "";
-}
-
-TEST(AlertMatching, MeasurementFieldsResolveRegardlessOfPrefixOrCase)
-{
-    EXPECT_EQ(resolveAlert("InletTemperature", true), "Inlet_liquid_temperature");
-    EXPECT_EQ(resolveAlert("SmartItInletTemperature", true),
+    EXPECT_EQ(resolveSensor("InletTemperature", SensorKind::Measurement),
               "Inlet_liquid_temperature");
-    EXPECT_EQ(resolveAlert("inlettemperature", true),
+    EXPECT_EQ(resolveSensor("SmartItInletTemperature", SensorKind::Measurement),
               "Inlet_liquid_temperature");
-    EXPECT_EQ(resolveAlert("FlowRate", true), "Inlet_liquid_flow_rate");
-    EXPECT_EQ(resolveAlert("LiquidPressure", true), "Inlet_liquid_pressure");
+    EXPECT_EQ(resolveSensor("inlettemperature", SensorKind::Measurement),
+              "Inlet_liquid_temperature");
+    EXPECT_EQ(resolveSensor("FlowRate", SensorKind::Measurement),
+              "Inlet_liquid_flow_rate");
+    EXPECT_EQ(resolveSensor("LiquidPressure", SensorKind::Measurement),
+              "Inlet_liquid_pressure");
 }
 
-TEST(AlertMatching, LeakEntriesResolveByName)
+TEST(SensorMatching, LeakEntriesCollapseToRackLevelLeak)
 {
-    EXPECT_EQ(resolveAlert("LeakDetected", false), "leak_detected");
-    EXPECT_EQ(resolveAlert("SmartItLeakDetected", false), "leak_detected");
-    EXPECT_EQ(resolveAlert("LeakRopeBreak", false), "leak_rope_break");
-    EXPECT_EQ(resolveAlert("SmartItLeakRopeBreak", false), "leak_rope_break");
+    EXPECT_EQ(resolveSensor("LeakDetected", SensorKind::Leak),
+              "Rack_level_leak");
+    EXPECT_EQ(resolveSensor("LeakRopeBreak", SensorKind::Leak),
+              "Rack_level_leak");
+    EXPECT_EQ(resolveSensor("SmartItLeakDetected", SensorKind::Leak),
+              "Rack_level_leak");
 }
 
-TEST(AlertMatching, WrapperNamesDoNotMatchMeasurements)
+TEST(SensorMatching, WrapperNamesDoNotMatchMeasurements)
 {
     // Wrapper objects (e.g. "FlowRateDeviation") must NOT be treated as a
     // leaf measurement; only their inner numeric leaves are.
-    EXPECT_EQ(resolveAlert("FlowRateDeviation", true), "");
-    EXPECT_EQ(resolveAlert("InletTemperatureDeviation", true), "");
-    EXPECT_EQ(resolveAlert("ShutdownAlert", false), "");
+    EXPECT_EQ(resolveSensor("FlowRateDeviation", SensorKind::Measurement), "");
+    EXPECT_EQ(resolveSensor("InletTempDeviation", SensorKind::Measurement), "");
+    EXPECT_EQ(resolveSensor("ShutdownAlert", SensorKind::Leak), "");
 }
 
-// ---------------------------------------------------------------------------
-// Telemetry matching -- mirror the receiver's whole-name, case-insensitive
-// match of a leaf's trailing dotted path against the telemetry rules.
-// ---------------------------------------------------------------------------
-
-// Resolve a leaf's trailing dotted path to its flattened field ("" if none).
-static std::string resolveTelemetry(const std::string& path)
+// Measurement and leak rules occupy disjoint name spaces for the canonical
+// inputs (a measurement field never resolves as a leak and vice versa).
+TEST(SensorMatching, MeasurementAndLeakSpacesAreDisjoint)
 {
-    for (const auto& r : getTelemetryRules())
-    {
-        std::regex re(r.pathPattern, std::regex::icase);
-        if (std::regex_match(path, re)) { return r.redisField; }
-    }
-    return "";
-}
-
-TEST(TelemetryMatching, FlatLeavesResolveByName)
-{
-    EXPECT_EQ(resolveTelemetry("EnergyValveActive"), "energy_valve_active");
-    EXPECT_EQ(resolveTelemetry("TemperatureSensorActive"),
-              "temperature_sensor_active");
-    EXPECT_EQ(resolveTelemetry("GlycolConcentration"), "glycol_concentration");
-    EXPECT_EQ(resolveTelemetry("RscmPosition"), "rscm_position");
-}
-
-TEST(TelemetryMatching, NestedLeavesResolveRegardlessOfPrefix)
-{
-    EXPECT_EQ(resolveTelemetry("InletTempDeviation.InletTemperature"),
-              "inlet_temp_deviation_temperature");
-    // A leading prefix (e.g. the envelope name) must not break the match.
-    EXPECT_EQ(resolveTelemetry("Alarms.InletTempDeviation.InletTemperature"),
-              "inlet_temp_deviation_temperature");
-    EXPECT_EQ(resolveTelemetry("LeakDetected.Severity"),
-              "leak_detected_severity");
-    EXPECT_EQ(resolveTelemetry("FlowRateDeviation.FlowRate"),
-              "flow_rate_deviation_flow_rate");
-}
-
-TEST(TelemetryMatching, UnknownLeavesDoNotMatch)
-{
-    EXPECT_EQ(resolveTelemetry("Unknown.Leaf"), "");
-    EXPECT_EQ(resolveTelemetry("InletTempDeviation"), "");
+    EXPECT_EQ(resolveSensor("InletTemperature", SensorKind::Leak), "");
+    EXPECT_EQ(resolveSensor("FlowRate", SensorKind::Leak), "");
+    EXPECT_EQ(resolveSensor("LeakDetected", SensorKind::Measurement), "");
 }
 
 } // namespace sonic::dbus_bridge::test

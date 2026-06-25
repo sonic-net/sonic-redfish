@@ -15,6 +15,7 @@
 #include <boost/beast/http/status.hpp>
 
 #include <memory>
+#include <regex>
 #include <string>
 
 namespace redfish
@@ -52,8 +53,24 @@ inline void handleSonicSubmitTelemetry(
         return;
     }
 
-    // Require the top-level key
-    if (!reqJson->contains("Alarms"))
+    // Require at least one top-level envelope key matching the ".*Alarms.*"
+    // pattern (e.g. "Alarms", "SystemAlarms").  The rack-manager firmware
+    // wraps telemetry under such an envelope; the bridge recursively
+    // classifies the measurement/leak entries beneath each matching envelope.
+    static const std::regex envelopePattern(".*Alarms.*");
+    bool hasEnvelope = false;
+    if (reqJson->is_object())
+    {
+        for (const auto& item : reqJson->items())
+        {
+            if (std::regex_match(item.key(), envelopePattern))
+            {
+                hasEnvelope = true;
+                break;
+            }
+        }
+    }
+    if (!hasEnvelope)
     {
         messages::propertyMissing(asyncResp->res, "Alarms");
         return;

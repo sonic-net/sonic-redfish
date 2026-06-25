@@ -141,7 +141,7 @@
     "description": "SubmitTelemetry without 'Alarms' returns PropertyMissing",
     "method": "POST",
     "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
-    "body": { "NotAlarms": {} },
+    "body": { "NotPresent": {} },
     "expected_status": 400,
     "expected_response": {
       "Alarms@Message.ExtendedInfo": [
@@ -208,50 +208,80 @@
   },
   {
     "name": "test_submit_telemetry_persists_to_state_db",
-    "description": "SubmitTelemetry flattens flags, deviations, and leak into RSCM_TELEMETRY|alarms",
+    "description": "SubmitTelemetry fans measurements and leak out to per-sensor RACK_MANAGER_DATA keys",
     "method": "POST",
     "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
+    "redis_setup": [
+      {
+        "db": "state_db",
+        "action": "delete",
+        "keys": [
+          "RACK_MANAGER_DATA|Inlet_liquid_temperature",
+          "RACK_MANAGER_DATA|Inlet_liquid_flow_rate",
+          "RACK_MANAGER_DATA|Inlet_liquid_pressure",
+          "RACK_MANAGER_DATA|Rack_level_leak"
+        ]
+      }
+    ],
     "body": {
       "Alarms": {
-        "EnergyValveActive": true,
-        "FlowrateSensorActive": false,
-        "FlowRateDeviation":       { "FlowRate": 28,           "Severity": "Normal" },
         "InletTempDeviation":      { "InletTemperature": 25.3, "Severity": "Major" },
+        "FlowRateDeviation":       { "FlowRate": 28,           "Severity": "Normal" },
         "LiquidPressureDeviation": { "LiquidPressure": 2,      "Severity": "Critical" },
-        "LeakDetected": {
-          "LeakDetected": false,
-          "LeakRopeBreak": false,
-          "Severity": "Normal"
-        },
-        "RscmPosition": 1
+        "LeakDetected":            { "Severity": "Critical" }
       }
     },
     "expected_status": 204,
     "redis_validations": [
       {
         "db": "state_db",
-        "key": "RSCM_TELEMETRY|alarms",
-        "wait_for_field": "leak_detected_severity",
+        "key": "RACK_MANAGER_DATA|Rack_level_leak",
+        "wait_for_field": "leak",
         "timeout": 5.0,
         "expected_fields": {
-          "energy_valve_active": "true",
-          "flowrate_sensor_active": "false",
-          "rscm_position": "1",
-          "flow_rate_deviation_flow_rate":      { "type": "float", "equals": 28 },
-          "inlet_temp_deviation_temperature":   { "type": "float", "equals": 25.3 },
-          "inlet_temp_deviation_severity":      "Major",
-          "liquid_pressure_deviation_pressure": { "type": "float", "equals": 2 },
-          "liquid_pressure_deviation_severity": "Critical",
-          "leak_detected":                      "false",
-          "leak_rope_break":                    "false",
-          "leak_detected_severity":             "Normal"
+          "leak":      "Critical",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false },
+          "unit":      { "exists": false },
+          "severity":  { "exists": false }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_DATA|Inlet_liquid_temperature",
+        "expected_fields": {
+          "InletTemperature": { "type": "float", "equals": 25.3 },
+          "unit":             "C",
+          "severity":         "Major",
+          "timestamp":        { "exists": true },
+          "rscm_position":    { "exists": false }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_DATA|Inlet_liquid_flow_rate",
+        "expected_fields": {
+          "value":     { "type": "float", "equals": 28 },
+          "unit":      "gallons_per_min",
+          "severity":  "Normal",
+          "timestamp": { "exists": true }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_DATA|Inlet_liquid_pressure",
+        "expected_fields": {
+          "value":     { "type": "float", "equals": 2 },
+          "unit":      "psi",
+          "severity":  "Critical",
+          "timestamp": { "exists": true }
         }
       }
     ]
   },
   {
     "name": "test_submit_alert_flat_form_persists",
-    "description": "Flat-form SubmitAlert fans measurements and leaks out to canonical RACK_MANAGER_ALERT keys",
+    "description": "Flat-form SubmitAlert fans measurements and leak out to per-sensor RACK_MANAGER_ALERT keys (severity/timestamp only)",
     "method": "POST",
     "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
     "redis_setup": [
@@ -262,8 +292,7 @@
           "RACK_MANAGER_ALERT|Inlet_liquid_temperature",
           "RACK_MANAGER_ALERT|Inlet_liquid_flow_rate",
           "RACK_MANAGER_ALERT|Inlet_liquid_pressure",
-          "RACK_MANAGER_ALERT|leak_detected",
-          "RACK_MANAGER_ALERT|leak_rope_break"
+          "RACK_MANAGER_ALERT|Rack_level_leak"
         ]
       }
     ],
@@ -272,66 +301,62 @@
         "Alerts": {
           "InletTemperature": 18,
           "FlowRate": 58,
-          "Severity": "Minor",
-          "RscmPosition": 1
+          "Severity": "Minor"
         },
         "LiquidPressureDeviation": {
           "LiquidPressure": 68,
-          "Severity": "Major",
-          "RscmPosition": 2
+          "Severity": "Major"
         },
-        "LeakDetected":  { "Severity": "Critical", "RscmPosition": 3 },
-        "LeakRopeBreak": { "Severity": "Major",    "RscmPosition": 4 }
+        "LeakDetected": { "Severity": "Critical" }
       }
     },
     "expected_status": 204,
     "redis_validations": [
       {
         "db": "state_db",
-        "key": "RACK_MANAGER_ALERT|leak_rope_break",
+        "key": "RACK_MANAGER_ALERT|Rack_level_leak",
         "wait_for_field": "leak",
-        "expected_fields": { "leak": "Major", "rscm_position": "4" }
+        "expected_fields": {
+          "leak":      "Critical",
+          "timestamp": { "exists": true }
+        }
       },
       {
         "db": "state_db",
         "key": "RACK_MANAGER_ALERT|Inlet_liquid_temperature",
         "expected_fields": {
-          "value":         { "type": "float", "equals": 18 },
-          "unit":          "C",
           "severity":      "Minor",
-          "rscm_position": "1"
+          "timestamp":     { "exists": true },
+          "value":         { "exists": false },
+          "unit":          { "exists": false },
+          "rscm_position": { "exists": false }
         }
       },
       {
         "db": "state_db",
         "key": "RACK_MANAGER_ALERT|Inlet_liquid_flow_rate",
         "expected_fields": {
-          "value":         { "type": "float", "equals": 58 },
-          "unit":          "gallons_per_min",
-          "severity":      "Minor",
-          "rscm_position": "1"
+          "severity":  "Minor",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false },
+          "unit":      { "exists": false }
         }
       },
       {
         "db": "state_db",
         "key": "RACK_MANAGER_ALERT|Inlet_liquid_pressure",
         "expected_fields": {
-          "value":         { "type": "float", "equals": 68 },
-          "unit":          "psi",
-          "severity":      "Major",
-          "rscm_position": "2"
+          "severity":  "Major",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false },
+          "unit":      { "exists": false }
         }
-      },
-      {
-        "db": "state_db",
-        "key": "RACK_MANAGER_ALERT|leak_detected",
-        "expected_fields": { "leak": "Critical", "rscm_position": "3" }
       }
     ]
   },
   {
     "name": "test_submit_alert_wrapped_form_inherits_context",
-    "description": "Wrapped-form SubmitAlert inherits Severity/RscmPosition and fans out via a 'redfish.*' key",
+    "description": "Wrapped-form SubmitAlert inherits Severity and fans out via a 'redfish.*' envelope",
     "method": "POST",
     "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
     "redis_setup": [
@@ -342,8 +367,7 @@
           "RACK_MANAGER_ALERT|Inlet_liquid_temperature",
           "RACK_MANAGER_ALERT|Inlet_liquid_flow_rate",
           "RACK_MANAGER_ALERT|Inlet_liquid_pressure",
-          "RACK_MANAGER_ALERT|leak_detected",
-          "RACK_MANAGER_ALERT|leak_rope_break"
+          "RACK_MANAGER_ALERT|Rack_level_leak"
         ]
       }
     ],
@@ -354,8 +378,7 @@
           "TempDeviation":           { "InletTemperature": 17 },
           "LiquidPressureDeviation": { "LiquidPressure": 68 },
           "LeakDetected":            { "Severity": "Critical" },
-          "Severity": "Major",
-          "RscmPosition": 3
+          "Severity": "Major"
         }
       }
     },
@@ -363,41 +386,39 @@
     "redis_validations": [
       {
         "db": "state_db",
-        "key": "RACK_MANAGER_ALERT|leak_detected",
+        "key": "RACK_MANAGER_ALERT|Rack_level_leak",
         "wait_for_field": "leak",
-        "expected_fields": { "leak": "Critical", "rscm_position": "3" }
+        "expected_fields": {
+          "leak":      "Critical",
+          "timestamp": { "exists": true }
+        }
       },
       {
         "db": "state_db",
         "key": "RACK_MANAGER_ALERT|Inlet_liquid_flow_rate",
         "expected_fields": {
-          "value":         { "type": "float", "equals": 58 },
-          "severity":      "Major",
-          "rscm_position": "3"
+          "severity":  "Major",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false }
         }
       },
       {
         "db": "state_db",
         "key": "RACK_MANAGER_ALERT|Inlet_liquid_temperature",
         "expected_fields": {
-          "value":         { "type": "float", "equals": 17 },
-          "severity":      "Major",
-          "rscm_position": "3"
+          "severity":  "Major",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false }
         }
       },
       {
         "db": "state_db",
         "key": "RACK_MANAGER_ALERT|Inlet_liquid_pressure",
         "expected_fields": {
-          "value":         { "type": "float", "equals": 68 },
-          "severity":      "Major",
-          "rscm_position": "3"
+          "severity":  "Major",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false }
         }
-      },
-      {
-        "db": "state_db",
-        "key": "RACK_MANAGER_ALERT|leak_rope_break",
-        "not_exists": true
       }
     ]
   }
