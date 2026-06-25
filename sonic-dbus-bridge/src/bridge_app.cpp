@@ -1,13 +1,14 @@
 ///////////////////////////////////////
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Nexthop AI
-// Copyright (C) 2024 SONiC Project
+// Copyright (C) 2026 SONiC Project
 // Author: Nexthop AI
 // Author: SONiC Project
 // License file: sonic-redfish/LICENSE
 ///////////////////////////////////////
 
 #include "bridge_app.hpp"
+#include "rack_manager_receiver.hpp"
 #include "inventory_model.hpp"
 #include "logger.hpp"
 #include "config.h"
@@ -82,6 +83,33 @@ bool BridgeApp::initialize()
 
     // Create state objects
     createStateObjects();
+
+    // Initialize rack manager receiver (alert/telemetry via D-Bus -> Redis).
+    // Uses its own connection / object server so it owns the
+    // com.sonic.RackManager well-known name independently of the
+    // Inventory connection.
+    LOG_INFO("Initializing Rack Manager Receiver...");
+    rackManagerReceiver_ = std::make_unique<RackManagerReceiver>(
+        *rackManagerServer_,
+        configMgr_->getStateDbHost(),
+        configMgr_->getStateDbPort(),
+        configMgr_->getStateDbIndex());
+    if (rackManagerReceiver_->initialize())
+    {
+        LOG_INFO("Rack Manager Receiver initialized");
+        if (objectMapper_)
+        {
+            objectMapper_->registerObject(
+                RACK_MANAGER_OBJ_PATH,
+                {RACK_MANAGER_IFACE});
+        }
+    }
+    else
+    {
+        LOG_ERROR("Rack Manager Receiver failed to initialize. "
+                  "SONiC OEM extension unavailable");
+        LOG_WARNING("Other bridge services will continue normally");
+    }
 
     // Initialize user management (non-fatal if it fails)
     initializeUserManager();
@@ -202,6 +230,22 @@ bool BridgeApp::connectDbus()
         stateConn_ = std::make_shared<sdbusplus::asio::connection>(io_, bus);
         stateConn_->request_name(STATE_HOST_BUSNAME);
         stateServer_ = std::make_unique<sdbusplus::asio::object_server>(stateConn_);
+
+        // Rack Manager Receiver connection
+        LOG_INFO("Requesting D-Bus name: %s", RACK_MANAGER_BUSNAME);
+        bus = nullptr;
+        r = sd_bus_open_system(&bus);
+        if (r < 0)
+        {
+            LOG_ERROR("Failed to open system bus for Rack Manager: %s",
+                      strerror(-r));
+            return false;
+        }
+        rackManagerConn_ =
+            std::make_shared<sdbusplus::asio::connection>(io_, bus);
+        rackManagerConn_->request_name(RACK_MANAGER_BUSNAME);
+        rackManagerServer_ =
+            std::make_unique<sdbusplus::asio::object_server>(rackManagerConn_);
 
         LOG_INFO("Connected to D-Bus successfully (5 connections)");
         return true;

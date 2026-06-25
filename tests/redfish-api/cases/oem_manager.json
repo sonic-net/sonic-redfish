@@ -1,0 +1,425 @@
+[
+  {
+    "name": "test_managers_collection_returns_200",
+    "description": "Managers collection is reachable",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/",
+    "expected_status": 200
+  },
+  {
+    "name": "test_bmc_manager_standard_redfish_fields",
+    "description": "BMC Manager exposes standard Redfish identity fields",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc",
+    "expected_status": 200,
+    "expected_response": {
+      "@odata.id": "/redfish/v1/Managers/bmc",
+      "Id": "bmc"
+    },
+    "validators": [
+      {
+        "type": "exists",
+        "path": "@odata.type"
+      },
+      {
+        "type": "exists",
+        "path": "Name"
+      },
+      {
+        "type": "exists",
+        "path": "ManagerType"
+      }
+    ]
+  },
+  {
+    "name": "test_bmc_manager_exposes_sonic_oem_block",
+    "description": "BMC Manager carries the SONiC OEM RackManager block with both action targets",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc",
+    "expected_status": 200,
+    "expected_response": {
+      "Oem": {
+        "SONiC": {
+          "RackManager": {
+            "@odata.type": "#SonicManager.v1_0_0.RackManager",
+            "@odata.id": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager",
+            "Id": "RackManager",
+            "Name": "SONiC Rack Manager Interface",
+            "Actions": {
+              "#SONiC.SubmitAlert": {
+                "target": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert"
+              },
+              "#SONiC.SubmitTelemetry": {
+                "target": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "test_rack_manager_sub_resource_fields",
+    "description": "RackManager OEM sub-resource exposes identity, description, and action fields",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager",
+    "expected_status": 200,
+    "expected_response": {
+      "@odata.type": "#SonicManager.v1_0_0.RackManager",
+      "@odata.id": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager",
+      "Id": "RackManager",
+      "Name": "SONiC Rack Manager Interface",
+      "Description": "OEM interface for rack manager to communicate with switch BMC",
+      "Actions": {
+        "#SONiC.SubmitAlert": {
+          "target": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert"
+        },
+        "#SONiC.SubmitTelemetry": {
+          "target": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry"
+        }
+      }
+    }
+  },
+  {
+    "name": "test_submit_alert_unauthenticated_returns_401",
+    "description": "SubmitAlert rejects unauthenticated POSTs",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
+    "auth": false,
+    "expected_status": 401
+  },
+  {
+    "name": "test_submit_telemetry_unauthenticated_returns_401",
+    "description": "SubmitTelemetry rejects unauthenticated POSTs",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
+    "auth": false,
+    "expected_status": 401
+  },
+  {
+    "name": "test_submit_alert_empty_body_returns_400",
+    "description": "SubmitAlert rejects an empty body as malformed JSON",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
+    "expected_status": 400,
+    "expected_response": {
+      "error": {
+        "code": "Base.1.19.MalformedJSON"
+      }
+    }
+  },
+  {
+    "name": "test_submit_telemetry_empty_body_returns_400",
+    "description": "SubmitTelemetry rejects an empty body as malformed JSON",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
+    "expected_status": 400,
+    "expected_response": {
+      "error": {
+        "code": "Base.1.19.MalformedJSON"
+      }
+    }
+  },
+  {
+    "name": "test_submit_alert_missing_top_level_key_returns_400",
+    "description": "SubmitAlert without a 'redfish.*' key returns PropertyMissing",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
+    "body": { "NotRedfishAlertData": {} },
+    "expected_status": 400,
+    "expected_response": {
+      "redfish@Message.ExtendedInfo": [
+        {
+          "MessageId": "Base.1.19.PropertyMissing",
+          "MessageArgs": ["redfish"]
+        }
+      ]
+    }
+  },
+  {
+    "name": "test_submit_telemetry_missing_top_level_key_returns_400",
+    "description": "SubmitTelemetry without 'Alarms' returns PropertyMissing",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
+    "body": { "NotPresent": {} },
+    "expected_status": 400,
+    "expected_response": {
+      "Alarms@Message.ExtendedInfo": [
+        {
+          "MessageId": "Base.1.19.PropertyMissing",
+          "MessageArgs": ["Alarms"]
+        }
+      ]
+    }
+  },
+  {
+    "name": "test_submit_alert_get_method_not_allowed",
+    "description": "SubmitAlert target is POST-only",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
+    "expected_status": 405
+  },
+  {
+    "name": "test_submit_telemetry_get_method_not_allowed",
+    "description": "SubmitTelemetry target is POST-only",
+    "method": "GET",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
+    "expected_status": 405
+  },
+  {
+    "name": "test_json_schemas_collection_lists_sonic_manager",
+    "description": "JsonSchemas collection lists the SonicManager schema",
+    "method": "GET",
+    "endpoint": "/redfish/v1/JsonSchemas",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "contains_member",
+        "path": "Members",
+        "value": "/redfish/v1/JsonSchemas/SonicManager"
+      }
+    ]
+  },
+  {
+    "name": "test_sonic_manager_schema_resource_fetchable",
+    "description": "SonicManager schema resource is served",
+    "method": "GET",
+    "endpoint": "/redfish/v1/JsonSchemas/SonicManager",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "exists",
+        "path": "Location"
+      }
+    ]
+  },
+  {
+    "name": "test_sonic_manager_versioned_schema_file_fetchable",
+    "description": "Versioned SonicManager v1_0_0 schema file is served",
+    "method": "GET",
+    "endpoint": "/redfish/v1/JsonSchemas/SonicManager/SonicManager.v1_0_0.json",
+    "expected_status": 200,
+    "validators": [
+      {
+        "type": "exists",
+        "path": "definitions"
+      }
+    ]
+  },
+  {
+    "name": "test_submit_telemetry_persists_to_state_db",
+    "description": "SubmitTelemetry fans measurements and leak out to per-sensor RACK_MANAGER_DATA keys",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitTelemetry",
+    "redis_setup": [
+      {
+        "db": "state_db",
+        "action": "delete",
+        "keys": [
+          "RACK_MANAGER_DATA|Inlet_liquid_temperature",
+          "RACK_MANAGER_DATA|Inlet_liquid_flow_rate",
+          "RACK_MANAGER_DATA|Inlet_liquid_pressure",
+          "RACK_MANAGER_DATA|Rack_level_leak"
+        ]
+      }
+    ],
+    "body": {
+      "Alarms": {
+        "InletTempDeviation":      { "InletTemperature": 25.3, "Severity": "Major" },
+        "FlowRateDeviation":       { "FlowRate": 28,           "Severity": "Normal" },
+        "LiquidPressureDeviation": { "LiquidPressure": 2,      "Severity": "Critical" },
+        "LeakDetected":            { "Severity": "Critical" }
+      }
+    },
+    "expected_status": 204,
+    "redis_validations": [
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_DATA|Rack_level_leak",
+        "wait_for_field": "leak",
+        "timeout": 5.0,
+        "expected_fields": {
+          "leak":      "Critical",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false },
+          "unit":      { "exists": false },
+          "severity":  { "exists": false }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_DATA|Inlet_liquid_temperature",
+        "expected_fields": {
+          "InletTemperature": { "type": "float", "equals": 25.3 },
+          "unit":             "C",
+          "severity":         "Major",
+          "timestamp":        { "exists": true },
+          "rscm_position":    { "exists": false }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_DATA|Inlet_liquid_flow_rate",
+        "expected_fields": {
+          "value":     { "type": "float", "equals": 28 },
+          "unit":      "gallons_per_min",
+          "severity":  "Normal",
+          "timestamp": { "exists": true }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_DATA|Inlet_liquid_pressure",
+        "expected_fields": {
+          "value":     { "type": "float", "equals": 2 },
+          "unit":      "psi",
+          "severity":  "Critical",
+          "timestamp": { "exists": true }
+        }
+      }
+    ]
+  },
+  {
+    "name": "test_submit_alert_flat_form_persists",
+    "description": "Flat-form SubmitAlert fans measurements and leak out to per-sensor RACK_MANAGER_ALERT keys (severity/timestamp only)",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
+    "redis_setup": [
+      {
+        "db": "state_db",
+        "action": "delete",
+        "keys": [
+          "RACK_MANAGER_ALERT|Inlet_liquid_temperature",
+          "RACK_MANAGER_ALERT|Inlet_liquid_flow_rate",
+          "RACK_MANAGER_ALERT|Inlet_liquid_pressure",
+          "RACK_MANAGER_ALERT|Rack_level_leak"
+        ]
+      }
+    ],
+    "body": {
+      "redfish_alert_data": {
+        "Alerts": {
+          "InletTemperature": 18,
+          "FlowRate": 58,
+          "Severity": "Minor"
+        },
+        "LiquidPressureDeviation": {
+          "LiquidPressure": 68,
+          "Severity": "Major"
+        },
+        "LeakDetected": { "Severity": "Critical" }
+      }
+    },
+    "expected_status": 204,
+    "redis_validations": [
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_ALERT|Rack_level_leak",
+        "wait_for_field": "leak",
+        "expected_fields": {
+          "leak":      "Critical",
+          "timestamp": { "exists": true }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_ALERT|Inlet_liquid_temperature",
+        "expected_fields": {
+          "severity":      "Minor",
+          "timestamp":     { "exists": true },
+          "value":         { "exists": false },
+          "unit":          { "exists": false },
+          "rscm_position": { "exists": false }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_ALERT|Inlet_liquid_flow_rate",
+        "expected_fields": {
+          "severity":  "Minor",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false },
+          "unit":      { "exists": false }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_ALERT|Inlet_liquid_pressure",
+        "expected_fields": {
+          "severity":  "Major",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false },
+          "unit":      { "exists": false }
+        }
+      }
+    ]
+  },
+  {
+    "name": "test_submit_alert_wrapped_form_inherits_context",
+    "description": "Wrapped-form SubmitAlert inherits Severity and fans out via a 'redfish.*' envelope",
+    "method": "POST",
+    "endpoint": "/redfish/v1/Managers/bmc/Oem/SONiC/RackManager/Actions/SONiC.SubmitAlert",
+    "redis_setup": [
+      {
+        "db": "state_db",
+        "action": "delete",
+        "keys": [
+          "RACK_MANAGER_ALERT|Inlet_liquid_temperature",
+          "RACK_MANAGER_ALERT|Inlet_liquid_flow_rate",
+          "RACK_MANAGER_ALERT|Inlet_liquid_pressure",
+          "RACK_MANAGER_ALERT|Rack_level_leak"
+        ]
+      }
+    ],
+    "body": {
+      "redfish_alert_data2": {
+        "ShutdownAlert": {
+          "FlowRateDeviation":       { "FlowRate": 58 },
+          "TempDeviation":           { "InletTemperature": 17 },
+          "LiquidPressureDeviation": { "LiquidPressure": 68 },
+          "LeakDetected":            { "Severity": "Critical" },
+          "Severity": "Major"
+        }
+      }
+    },
+    "expected_status": 204,
+    "redis_validations": [
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_ALERT|Rack_level_leak",
+        "wait_for_field": "leak",
+        "expected_fields": {
+          "leak":      "Critical",
+          "timestamp": { "exists": true }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_ALERT|Inlet_liquid_flow_rate",
+        "expected_fields": {
+          "severity":  "Major",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_ALERT|Inlet_liquid_temperature",
+        "expected_fields": {
+          "severity":  "Major",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false }
+        }
+      },
+      {
+        "db": "state_db",
+        "key": "RACK_MANAGER_ALERT|Inlet_liquid_pressure",
+        "expected_fields": {
+          "severity":  "Major",
+          "timestamp": { "exists": true },
+          "value":     { "exists": false }
+        }
+      }
+    ]
+  }
+]

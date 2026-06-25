@@ -1,7 +1,7 @@
 ///////////////////////////////////////
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2026 Nexthop AI
-// Copyright (C) 2024 SONiC Project
+// Copyright (C) 2026 SONiC Project
 // Author: Nexthop AI
 // Author: SONiC Project
 // License file: sonic-redfish/LICENSE
@@ -19,6 +19,7 @@
 #include "object_mapper.hpp"
 #include "user_mgr.hpp"
 #include "state_manager.hpp"
+#include "rack_manager_receiver.hpp"
 #include "redis_state_subscriber.hpp"
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/object_server.hpp>
@@ -98,6 +99,11 @@ namespace sonic::dbus_bridge
             std::shared_ptr<sdbusplus::asio::connection> stateConn_;
             std::unique_ptr<sdbusplus::asio::object_server> stateServer_;
 
+            // Dedicated connection for the rack manager receiver so it
+            // owns its own well-known name (com.sonic.RackManager).
+            std::shared_ptr<sdbusplus::asio::connection> rackManagerConn_;
+            std::unique_ptr<sdbusplus::asio::object_server> rackManagerServer_;
+
             // Data source adapters
             std::shared_ptr<RedisAdapter> redisAdapter_;
             std::unique_ptr<PlatformJsonAdapter> platformAdapter_;
@@ -116,6 +122,9 @@ namespace sonic::dbus_bridge
 
             // Event-driven Redis subscriber
             std::unique_ptr<RedisStateSubscriber> redisSubscriber_;
+
+            // Rack manager alert / telemetry receiver
+            std::unique_ptr<RackManagerReceiver> rackManagerReceiver_;
 
             // Current inventory model
             InventoryModel currentModel_;
