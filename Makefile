@@ -20,6 +20,12 @@ SONIC_CONFIG_MAKE_JOBS ?= $(shell nproc)
 BMCWEB_HEAD_COMMIT ?= 6926d430
 BMCWEB_REPO_URL ?= https://github.com/openbmc/bmcweb.git
 
+# Pinned stdexec SHA. bmcweb's nested sdbusplus pulls stdexec via a wrap
+# that defaults to `revision = HEAD`; we override with this fixed SHA so
+# builds are reproducible even if upstream moves.
+STDEXEC_REVISION ?= fee4d651494014610a277540f209cae56011e47f
+STDEXEC_URL ?= https://github.com/NVIDIA/stdexec.git
+
 # Target directory for build artifacts
 SONIC_REDFISH_TARGET ?= target/debs/trixie
 
@@ -33,6 +39,7 @@ BUILD_DIR := $(REPO_ROOT)/build
 TARGET_DIR := $(REPO_ROOT)/$(SONIC_REDFISH_TARGET)
 SERIES_FILE := $(PATCHES_DIR)/series
 DEBIAN_DIR := $(BMCWEB_DIR)/debian
+OEM_EXT_DIR := $(REPO_ROOT)/oem-extension
 
 # Build artifacts
 BMCWEB_BINARY := $(BMCWEB_DIR)/build/bmcweb
@@ -46,7 +53,7 @@ DOCKERFILE_BUILD := $(BUILD_DIR)/Dockerfile.build
 MAIN_TARGET := $(BMCWEB_BINARY)
 DERIVED_TARGETS := $(BRIDGE_BINARY)
 
-.PHONY: all build clean reset setup-bmcweb copy-patches apply-patches build-bmcweb build-bridge build-bmcweb-native build-bridge-native build-in-docker test unit-test help
+.PHONY: all build clean reset setup-bmcweb copy-oem-extension copy-patches apply-patches build-bmcweb build-bridge build-bmcweb-native build-bridge-native build-in-docker test unit-test help
 
 # Recipes in this Makefile share Docker images and the target/ directory, so
 # the top-level prereq chain (build → unit-test → test) must run sequentially.
@@ -136,7 +143,7 @@ build: $(DOCKERFILE_BUILD)
 
 # Build inside Docker (called from Docker container)
 # Note: sdbusplus is pre-installed in the Docker image
-build-in-docker: setup-bmcweb apply-patches build-bridge-native build-bmcweb-native
+build-in-docker: setup-bmcweb copy-oem-extension apply-patches build-bridge-native build-bmcweb-native
 	@echo "  Build inside Docker completed"
 
 # Setup bmcweb source
@@ -161,14 +168,45 @@ setup-bmcweb:
 	fi
 	@echo "  bmcweb ready"
 
-# Copy patches to debian/ directory 
+# Copy OEM extension files into bmcweb source tree before patching.
+#
+# Path coupling note (do not change one without the other):
+#   * Headers land in bmcweb/redfish-core/lib/sonic/ — this path is referenced
+#     by the patch 0003 which #include's "sonic/sonic_oem_redfish.hpp".
+#   * JSON schemas land in bmcweb/redfish-core/schema/oem/sonic/json-schema/
+#     — this path, plus the meson.build copied next to it, is referenced by
+#     the OEM schema registration logic patched into bmcweb's top-level
+#     meson build. Renaming either side requires updating the patch.
+copy-oem-extension: setup-bmcweb
+	@echo "Copying SONiC OEM extension into bmcweb..."
+	@mkdir -p $(BMCWEB_DIR)/redfish-core/lib/sonic
+	@mkdir -p $(BMCWEB_DIR)/redfish-core/schema/oem/sonic/json-schema
+	@# Use -u (update) so an older OEM file cannot overwrite a newer in-tree
+	@# copy that a developer may have iterated on inside bmcweb/.
+	@cp -u $(OEM_EXT_DIR)/sonic/*.hpp $(BMCWEB_DIR)/redfish-core/lib/sonic/
+	@cp -u $(OEM_EXT_DIR)/schema/json-schema/*.json $(BMCWEB_DIR)/redfish-core/schema/oem/sonic/json-schema/
+	@cp -u $(OEM_EXT_DIR)/schema/meson.build $(BMCWEB_DIR)/redfish-core/schema/oem/sonic/
+	@echo "  OEM extension files copied"
+
+	@# Ensure stdexec.wrap exists in bmcweb subprojects, pinned to a fixed
+	@# SHA. sdbusplus depends on stdexec but bmcweb does not ship a
+	@# top-level wrap for it; without this, meson cannot resolve the
+	@# nested subproject dependency when building from a clean tree.
+	@# Always overwrite so a stale wrap from a previous build cannot
+	@# silently keep us on an older / drifting revision.
+	@echo "  Writing pinned stdexec.wrap (revision $(STDEXEC_REVISION))..."
+	@printf '[wrap-git]\nurl = %s\nrevision = %s\ndepth = 1\n\n[provide]\nstdexec = stdexec_dep\n' \
+		'$(STDEXEC_URL)' '$(STDEXEC_REVISION)' \
+		> $(BMCWEB_DIR)/subprojects/stdexec.wrap
+
+# Copy patches to debian/ directory
 copy-patches: $(SERIES_FILE)
 	@echo "Copying patches to debian/ directory ..."
 	@# Note: Patches will create debian/ directory, so we only copy series file after patches are applied
 	@echo "  Patches will be applied from $(PATCHES_DIR)"
 
 # Apply patches using series file
-apply-patches: setup-bmcweb
+apply-patches: setup-bmcweb copy-oem-extension
 	@echo "Applying patches from series file..."
 	@if [ ! -d "$(BMCWEB_DIR)" ]; then \
 		echo "Error: bmcweb directory not found"; \
@@ -176,27 +214,29 @@ apply-patches: setup-bmcweb
 	fi
 
 	@cd $(BMCWEB_DIR) && \
-	if git diff --quiet 2>/dev/null; then \
-		echo "  Applying patches from $(PATCHES_DIR)/series..."; \
-		while IFS= read -r patch || [ -n "$$patch" ]; do \
-			patch=$$(echo "$$patch" | sed 's/#.*//;s/^[[:space:]]*//;s/[[:space:]]*$$//'); \
-			[ -z "$$patch" ] && continue; \
+	echo "  Applying patches from $(PATCHES_DIR)/series..."; \
+	while IFS= read -r patch || [ -n "$$patch" ]; do \
+		patch=$$(echo "$$patch" | sed 's/#.*//;s/^[[:space:]]*//;s/[[:space:]]*$$//'); \
+		[ -z "$$patch" ] && continue; \
+		if [ ! -f "$(PATCHES_DIR)/$$patch" ]; then \
+			echo "Error: Patch file not found: $$patch"; \
+			exit 1; \
+		fi; \
+		if git apply --reverse --check "$(PATCHES_DIR)/$$patch" >/dev/null 2>&1; then \
+			echo "  Already applied, skipping: $$patch"; \
+		elif git apply --check "$(PATCHES_DIR)/$$patch" >/dev/null 2>&1; then \
 			echo "  Applying: $$patch"; \
-			if [ -f "$(PATCHES_DIR)/$$patch" ]; then \
-				git apply "$(PATCHES_DIR)/$$patch" || { echo "Error applying $$patch"; exit 1; }; \
-			else \
-				echo "Error: Patch file not found: $$patch"; \
-				exit 1; \
-			fi; \
-		done < $(PATCHES_DIR)/series; \
-		echo "  All patches applied successfully"; \
-	else \
-		echo "  Patches already applied (bmcweb has local changes)"; \
-	fi
+			git apply "$(PATCHES_DIR)/$$patch" || { echo "Error applying $$patch"; exit 1; }; \
+		else \
+			echo "Error: $$patch neither applies cleanly nor is already applied (conflict or partial state)"; \
+			exit 1; \
+		fi; \
+	done < $(PATCHES_DIR)/series; \
+	echo "  All patches applied successfully"
 
 # Build bmcweb Debian package
-# Dependencies: clean → setup-bmcweb → apply-patches → build-bmcweb
-build-bmcweb: clean setup-bmcweb apply-patches
+# Dependencies: clean → setup-bmcweb → copy-oem-extension → apply-patches → build-bmcweb
+build-bmcweb: clean setup-bmcweb copy-oem-extension apply-patches
 	@echo "========================================="
 	@echo "Building bmcweb Debian package"
 	@echo "========================================="
@@ -283,7 +323,7 @@ build-bridge: clean
 	@ls -lh $(TARGET_DIR)/sonic-dbus-bridge* 2>/dev/null || echo "  No artifacts found"
 
 # Build bmcweb natively (inside Docker container, no nested Docker)
-build-bmcweb-native:
+build-bmcweb-native: setup-bmcweb copy-oem-extension apply-patches
 	@echo "========================================="
 	@echo "Building bmcweb Debian package (native)"
 	@echo "========================================="
@@ -346,7 +386,7 @@ BMCWEB = bmcweb_$(SONIC_REDFISH_VERSION)_$(CONFIGURED_ARCH).deb
 BMCWEB_DBG = bmcweb-dbg_$(SONIC_REDFISH_VERSION)_$(CONFIGURED_ARCH).deb
 
 # Main bmcweb package target for sonic-buildimage
-$(addprefix $(DEST)/, $(BMCWEB)): $(DEST)/% : setup-bmcweb apply-patches
+$(addprefix $(DEST)/, $(BMCWEB)): $(DEST)/% : setup-bmcweb copy-oem-extension apply-patches
 	# Build bmcweb package using dpkg-buildpackage
 	pushd $(BMCWEB_DIR)
 
@@ -446,9 +486,12 @@ endif
 # Unit Tests (C++ / gtest)
 # ========================================
 # Dumb-and-direct: each tests/unit-tests/<foo>_test.cpp is compiled together
-# with sonic-dbus-bridge/src/<foo>.cpp and linked against gtest. Runs inside
-# the builder container -- no services, no privileged mode, no new image.
-# If libgtest-dev isn't present in the builder image, it's installed on demand.
+# with sonic-dbus-bridge/src/<foo>.cpp (when present) and linked against gtest.
+# Header-only test targets (no matching src/<foo>.cpp) are compiled standalone
+# so they can exercise pure inline / template / declarative-table code.
+# Runs inside the builder container -- no services, no privileged mode, no
+# new image. If libgtest-dev isn't present in the builder image, it's
+# installed on demand.
 
 UNIT_TEST_DIR := $(REPO_ROOT)/tests/unit-tests
 
@@ -473,12 +516,16 @@ unit-test:
 			for t in tests/unit-tests/*_test.cpp; do \
 				base=\$$(basename \$$t _test.cpp); \
 				src=sonic-dbus-bridge/src/\$$base.cpp; \
-				if [ ! -f \$$src ]; then continue; fi; \
+				if [ -f \$$src ]; then \
+					extra_src=\$$src; \
+				else \
+					extra_src=; \
+				fi; \
 				g++ -std=c++20 -Wall -Wextra -g -O0 -pthread \
 					-I sonic-dbus-bridge/include \
 					-I /usr/src/googletest/googletest \
 					-I /usr/src/googletest/googletest/include \
-					\$$t \$$src \
+					\$$t \$$extra_src \
 					/usr/src/googletest/googletest/src/gtest-all.cc \
 					/usr/src/googletest/googletest/src/gtest_main.cc \
 					-o /tmp/ut/\$$base || { failed=1; continue; }; \

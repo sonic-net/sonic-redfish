@@ -1,0 +1,19 @@
+{
+    "$id": "https://github.com/sonic-net/sonic-redfish/tree/master/oem-extension/schema/json-schema/SonicManager.json",
+    "$ref": "/redfish/v1/JsonSchemas/SonicManager/SonicManager.v1_0_0.json#/definitions/Manager",
+    "$schema": "http://redfish.dmtf.org/schemas/v1/redfish-schema-v1.json",
+    "copyright": "Copyright 2026 SONiC Contributors.",
+    "definitions": {
+        "Manager": {
+            "anyOf": [
+                {
+                    "$ref": "/redfish/v1/JsonSchemas/SonicManager/SonicManager.v1_0_0.json#/definitions/Manager"
+                }
+            ],
+            "description": "SONiC OEM extension for the Redfish Manager resource (unversioned alias).",
+            "longDescription": "Unversioned alias schema for the SONiC Manager OEM extension.  Clients should resolve this reference to the latest available versioned schema (currently v1_0_0)."
+        }
+    },
+    "owningEntity": "SONiC",
+    "title": "#SonicManager.Manager"
+}

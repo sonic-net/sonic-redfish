@@ -1,3 +1,12 @@
+#######################################
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 Nexthop AI
+# Copyright (C) 2026 SONiC Project
+# Author: Nexthop AI
+# Author: SONiC Project
+# License file: sonic-redfish/LICENSE
+#######################################
+
 project(
     'sonic-dbus-bridge',
     'cpp',
@@ -33,6 +42,11 @@ conf_data.set_quoted(
     'xyz.openbmc_project.State.Host',
     description: 'The D-Bus busname for host state management.',
 )
+conf_data.set_quoted(
+    'RACK_MANAGER_BUSNAME',
+    'com.sonic.RackManager',
+    description: 'The D-Bus busname for the rack manager alert/telemetry receiver.',
+)
 
 # Enable root user management by default
 conf_data.set('ENABLE_ROOT_USER_MGMT', true)
@@ -65,6 +79,7 @@ sources = files(
     'src/config_manager.cpp',
     'src/object_mapper.cpp',
     'src/state_manager.cpp',
+    'src/rack_manager_receiver.cpp',
     # User management
     'src/user_mgr.cpp',
     'src/users.cpp',
@@ -108,6 +123,7 @@ install_data(
     'dbus/xyz.openbmc_project.Inventory.Manager.conf',
     'dbus/xyz.openbmc_project.ObjectMapper.conf',
     'dbus/xyz.openbmc_project.User.Manager.conf',
+    'dbus/com.sonic.RackManager.conf',
     install_dir: get_option('sysconfdir') / 'dbus-1' / 'system.d',
 )
 

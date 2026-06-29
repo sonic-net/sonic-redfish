@@ -1,0 +1,156 @@
+{
+    "$id": "https://github.com/sonic-net/sonic-redfish/tree/master/oem-extension/schema/json-schema/SonicManager.v1_0_0.json",
+    "$ref": "#/definitions/Manager",
+    "$schema": "http://redfish.dmtf.org/schemas/v1/redfish-schema-v1.json",
+    "copyright": "Copyright 2026 SONiC Contributors and Nexthop AI.",
+    "definitions": {
+        "Manager": {
+            "additionalProperties": false,
+            "anyOf": [
+                {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/OemObject"
+                }
+            ],
+            "description": "The SONiC OEM extension for the Manager resource.",
+            "longDescription": "This object shall contain SONiC-specific properties added to the standard Redfish Manager resource as an OEM extension.",
+            "patternProperties": {
+                "^([a-zA-Z_][a-zA-Z0-9_]*)?@(odata|Redfish|Message)\\.[a-zA-Z_][a-zA-Z0-9_]*$": {
+                    "type": ["array", "boolean", "integer", "number", "null", "object", "string"]
+                }
+            },
+            "properties": {
+                "RackManager": {
+                    "$ref": "#/definitions/RackManager",
+                    "description": "The link to the SONiC rack-manager communication sub-resource."
+                }
+            },
+            "type": "object"
+        },
+        "RackManager": {
+            "additionalProperties": false,
+            "anyOf": [
+                {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/OemObject"
+                }
+            ],
+            "description": "The SONiC rack-manager communication sub-resource.",
+            "longDescription": "This resource shall expose inbound actions through which a rack manager pushes structured alerts and periodic telemetry to the switch BMC.",
+            "patternProperties": {
+                "^([a-zA-Z_][a-zA-Z0-9_]*)?@(odata|Redfish|Message)\\.[a-zA-Z_][a-zA-Z0-9_]*$": {
+                    "type": ["array", "boolean", "integer", "number", "null", "object", "string"]
+                }
+            },
+            "properties": {
+                "Actions": {
+                    "additionalProperties": false,
+                    "description": "The available actions for this resource.",
+                    "longDescription": "This property shall contain the available actions for this resource.",
+                    "properties": {
+                        "#SONiC.SubmitAlert": { "$ref": "#/definitions/SubmitAlert" },
+                        "#SONiC.SubmitTelemetry": { "$ref": "#/definitions/SubmitTelemetry" }
+                    },
+                    "type": "object"
+                },
+                "Description": {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/Description",
+                    "readonly": true
+                },
+                "Id": {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/Id",
+                    "readonly": true
+                },
+                "Name": {
+                    "$ref": "http://redfish.dmtf.org/schemas/v1/Resource.json#/definitions/Name",
+                    "readonly": true
+                }
+            },
+            "required": ["@odata.id", "@odata.type", "Id", "Name"],
+            "type": "object"
+        },
+        "SubmitAlert": {
+            "additionalProperties": false,
+            "description": "Submits structured alert data from a rack manager to the switch BMC.",
+            "longDescription": "This action shall submit a set of structured alert entries from a rack manager to the switch BMC.  Per DMTF action idiom this definition serves two roles: the `parameters` block describes the POST request body (clients sending POSTs should look there); the `properties` block (target, title) describes how the action is advertised on GET of the parent resource.",
+            "parameters": {
+                "redfish": {
+                    "additionalProperties": true,
+                    "description": "Open container for alert entries, keyed by alert type name.",
+                    "longDescription": "Required.  The envelope key is matched at runtime against the fixed pattern `redfish.*` (for example `redfish_alert_data` or `redfishXYZ`); `redfish` is shown here as the canonical name and more than one matching envelope may be present.  Keys within are vendor-defined alert type names; values are either an AlertEntry or a wrapper object (for example, ShutdownAlert).  The receiver classifies each entry by the measurement field it carries (case-insensitive match on the trailing field name, e.g. *InletTemperature, *FlowRate, *LiquidPressure) or as a leak entry (*Leak*, collapsed into a single Rack_level_leak record), and persists it under a canonical RACK_MANAGER_ALERT|<SensorName> key holding severity and timestamp (leak and timestamp for a leak).  Severity is inherited from the nearest enclosing object when absent on a leaf; RscmPosition is accepted for compatibility but is not persisted.",
+                    "requiredParameter": true,
+                    "type": "object"
+                }
+            },
+            "properties": {
+                "target": {
+                    "description": "Link to invoke action.",
+                    "format": "uri-reference",
+                    "type": "string"
+                },
+                "title": {
+                    "description": "Friendly action name.",
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "AlertEntry": {
+            "additionalProperties": true,
+            "description": "A single alert entry.",
+            "longDescription": "Each entry shall include Severity.  Additional properties beyond Severity are alert-type specific (for example FlowRate, LiquidPressure, InletTemperature) and are classified by the receiver into canonical per-sensor records.  Severity may appear on any enclosing object and is inherited by entries that omit it.  An optional RscmPosition is accepted for forward compatibility but is not persisted under the doc-aligned DB schema.",
+            "properties": {
+                "Severity": {
+                    "$ref": "#/definitions/SonicSeverity",
+                    "description": "Severity of the alert condition."
+                }
+            },
+            "required": ["Severity"],
+            "type": "object"
+        },
+        "SubmitTelemetry": {
+            "additionalProperties": false,
+            "description": "Submits periodic telemetry and alarm data from a rack manager to the switch BMC.",
+            "longDescription": "This action shall submit a periodic telemetry payload from a rack manager to the switch BMC.  Per DMTF action idiom this definition serves two roles: the `parameters` block describes the POST request body; the `properties` block (target, title) describes how the action is advertised on GET of the parent resource.",
+            "parameters": {
+                "Alarms": {
+                    "$ref": "#/definitions/Alarms",
+                    "description": "Container for alarm and sensor telemetry data.",
+                    "longDescription": "The value of this parameter shall conform to Alarms.  Receivers shall pass unknown scalar properties through to the BMC for storage.",
+                    "requiredParameter": true
+                }
+            },
+            "properties": {
+                "target": {
+                    "description": "Link to invoke action.",
+                    "format": "uri-reference",
+                    "type": "string"
+                },
+                "title": {
+                    "description": "Friendly action name.",
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "Alarms": {
+            "additionalProperties": true,
+            "description": "Open telemetry payload container.",
+            "longDescription": "Following the SubmitAlert idiom (the `redfish` parameter on SubmitAlert is also an open container; see AlertEntry for the per-entry shape), this object is intentionally open: the schema does not enumerate individual sensor or measurement fields.  The set of recognised keys is defined by the bridge's declarative field-mapping table.",
+            "type": "object"
+        },
+        "SonicSeverity": {
+            "description": "Severity classification used by SONiC OEM alert and telemetry payloads.",
+            "longDescription": "This string enumeration shall classify the severity of an alert or telemetry deviation reported by the rack manager.  The values are SONiC-specific and do not map one-to-one to the DMTF Health enumeration; receivers shall accept and store the value verbatim.",
+            "enum": ["Normal", "Minor", "Major", "Critical"],
+            "enumDescriptions": {
+                "Normal":   "No abnormal condition; the reported value is within expected bounds.",
+                "Minor":    "Degraded condition; service continues without immediate intervention.",
+                "Major":    "Service-impacting condition; operator intervention is expected.",
+                "Critical": "Service-affecting condition; immediate intervention is required."
+            },
+            "type": "string"
+        }
+    },
+    "owningEntity": "SONiC",
+    "release": "1.0",
+    "title": "#SonicManager.v1_0_0.Manager"
+}
