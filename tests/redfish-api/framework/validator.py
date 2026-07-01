@@ -31,6 +31,53 @@ ALLOWED_REDIS_DBS = {"state_db", "config_db"}
 ALLOWED_REDIS_ACTIONS = {"delete"}
 ALLOWED_FIELD_TYPES = {"string", "int", "float", "bool"}
 
+EVENT_FLOW_ALLOWED_KEYS = {
+    "name", "description", "type", "subscribe", "trigger", "expect_event", "teardown",
+}
+EVENT_FLOW_REQUIRED_KEYS = {
+    "name", "description", "type", "subscribe", "trigger", "expect_event",
+}
+
+
+def _validate_event_flow_case(name: str, case: dict) -> list[str]:
+    """Validate an event_flow case. Returns a list of error strings."""
+    errors = []
+
+    missing = EVENT_FLOW_REQUIRED_KEYS - set(case.keys())
+    if missing:
+        errors.append(f"Case '{name}': Missing required keys: {', '.join(sorted(missing))}")
+    unknown = set(case.keys()) - EVENT_FLOW_ALLOWED_KEYS
+    if unknown:
+        errors.append(f"Case '{name}': Unknown keys found: {', '.join(sorted(unknown))}")
+
+    sub = case.get("subscribe")
+    if not isinstance(sub, dict):
+        errors.append(f"Case '{name}': 'subscribe' must be an object.")
+    else:
+        if "endpoint" not in sub:
+            errors.append(f"Case '{name}': 'subscribe' must contain 'endpoint'.")
+        if sub.get("method") not in ALLOWED_METHODS:
+            errors.append(f"Case '{name}': 'subscribe.method' invalid or missing.")
+
+    trigger = case.get("trigger")
+    if not isinstance(trigger, list):
+        errors.append(f"Case '{name}': 'trigger' must be an array of step objects.")
+    else:
+        for s_idx, step in enumerate(trigger):
+            if not isinstance(step, dict):
+                errors.append(f"Case '{name}', trigger[{s_idx}]: must be an object.")
+            elif "run" not in step and "wait_seconds" not in step:
+                errors.append(f"Case '{name}', trigger[{s_idx}]: needs 'run' or 'wait_seconds'.")
+
+    ee = case.get("expect_event")
+    if not isinstance(ee, dict):
+        errors.append(f"Case '{name}': 'expect_event' must be an object.")
+    elif not isinstance(ee.get("validators"), list) or not ee.get("validators"):
+        errors.append(f"Case '{name}': 'expect_event.validators' must be a non-empty array.")
+
+    return errors
+
+
 def validate_test_file(filepath: Path) -> list[str]:
     """
     Validates the structure and semantics of a Redfish JSON test file.
@@ -59,6 +106,10 @@ def validate_test_file(filepath: Path) -> list[str]:
         if name in seen_names:
             errors.append(f"Case '{name}': Duplicate test name found.")
         seen_names.add(name)
+
+        if case.get("type") == "event_flow":
+            errors.extend(_validate_event_flow_case(name, case))
+            continue
 
         #  Syntactic Key Validation
         missing_keys = REQUIRED_KEYS - set(case.keys())

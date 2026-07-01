@@ -16,8 +16,11 @@ from pathlib import Path
 from data.redis_seed import DEVICE_METADATA
 from framework.utils import resolve_dict, resolve_template, assert_subset, run_validators, extract_path
 from framework.validator import validate_test_file
+from framework import event_flow
 
 CASES_DIR = Path(__file__).parent.parent / "cases"
+# repo root = .../tests/redfish-api/framework -> up three levels
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # Defaults for async-drain polling on redis_validations
 DEFAULT_REDIS_TIMEOUT_SEC = 5.0
@@ -179,6 +182,11 @@ def test_redfish_api(case, redfish, state_db, config_db):
     """Generic JSON-driven test runner."""
     state = {}
     redis_dbs = {"state_db": state_db, "config_db": config_db}
+
+    if case.get("type") == "event_flow":
+        test_logger.info(f"\n===== STARTING EVENT-FLOW TEST: {case['name']} =====")
+        event_flow.run_case(case, redfish, state_db, str(REPO_ROOT))
+        return
 
     def _log_req(method, url, body, resp):
         test_logger.info(f"[REQUEST] {method.upper()} {url}")
