@@ -40,6 +40,7 @@ TARGET_DIR := $(REPO_ROOT)/$(SONIC_REDFISH_TARGET)
 SERIES_FILE := $(PATCHES_DIR)/series
 DEBIAN_DIR := $(BMCWEB_DIR)/debian
 OEM_EXT_DIR := $(REPO_ROOT)/oem-extension
+LEAK_DET_DIR := $(REPO_ROOT)/leak_detection
 
 # Build artifacts
 BMCWEB_BINARY := $(BMCWEB_DIR)/build/bmcweb
@@ -53,7 +54,7 @@ DOCKERFILE_BUILD := $(BUILD_DIR)/Dockerfile.build
 MAIN_TARGET := $(BMCWEB_BINARY)
 DERIVED_TARGETS := $(BRIDGE_BINARY)
 
-.PHONY: all build clean reset setup-bmcweb copy-oem-extension copy-patches apply-patches build-bmcweb build-bridge build-bmcweb-native build-bridge-native build-in-docker test unit-test help
+.PHONY: all build clean reset setup-bmcweb copy-oem-extension copy-leak-detection copy-patches apply-patches build-bmcweb build-bridge build-bmcweb-native build-bridge-native build-in-docker test unit-test help
 
 # Recipes in this Makefile share Docker images and the target/ directory, so
 # the top-level prereq chain (build → unit-test → test) must run sequentially.
@@ -199,6 +200,29 @@ copy-oem-extension: setup-bmcweb
 		'$(STDEXEC_URL)' '$(STDEXEC_REVISION)' \
 		> $(BMCWEB_DIR)/subprojects/stdexec.wrap
 
+# Copy standalone leak-detection handlers into bmcweb.
+#
+# These implement the standard DMTF LeakDetection / LeakDetectorCollection /
+# LeakDetector resources they are NOT an OEM extension, so they live at the
+# repo root and land in their own bmcweb subdirectory.
+copy-leak-detection: setup-bmcweb
+	@echo "Copying leak-detection handlers into bmcweb..."
+	@mkdir -p $(BMCWEB_DIR)/redfish-core/lib/leak_detection
+	@cp -u $(LEAK_DET_DIR)/*.hpp $(BMCWEB_DIR)/redfish-core/lib/leak_detection/
+	@echo "  leak-detection files copied"
+
+	@echo "  Linking leak-detection JSON schemas into json-schema-installed..."
+	@for schema in LeakDetection.v1_1_0.json LeakDetector.v1_5_0.json LeakDetectorCollection.json; do \
+		src="$(BMCWEB_DIR)/redfish-core/schema/dmtf/json-schema/$$schema"; \
+		dst="$(BMCWEB_DIR)/redfish-core/schema/dmtf/json-schema-installed/$$schema"; \
+		if [ ! -f "$$src" ]; then \
+			echo "Error: expected leak schema not found in pinned bmcweb: $$schema"; \
+			exit 1; \
+		fi; \
+		ln -sf "../json-schema/$$schema" "$$dst"; \
+	done
+	@echo "  leak-detection schemas linked"
+
 # Copy patches to debian/ directory
 copy-patches: $(SERIES_FILE)
 	@echo "Copying patches to debian/ directory ..."
@@ -206,7 +230,7 @@ copy-patches: $(SERIES_FILE)
 	@echo "  Patches will be applied from $(PATCHES_DIR)"
 
 # Apply patches using series file
-apply-patches: setup-bmcweb copy-oem-extension
+apply-patches: setup-bmcweb copy-oem-extension copy-leak-detection
 	@echo "Applying patches from series file..."
 	@if [ ! -d "$(BMCWEB_DIR)" ]; then \
 		echo "Error: bmcweb directory not found"; \
