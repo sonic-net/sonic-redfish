@@ -41,6 +41,14 @@ measurement / leak entry fans out into its own per-sensor key
 schema (see the SONiC platform design doc,
 [pmon-bmc-design.md - DB schema](https://github.com/sonic-net/SONiC/blob/master/doc/bmc/sonicBMC/pmon-bmc-design.md#2121-db-schema)).
 
+> **Severity casing:** Redfish clients send the `SonicSeverity` enum in mixed
+> case (`Normal`/`Minor`/`Major`/`Critical`), but the platform STATE_DB schema
+> and its consumers (`thermalctld`'s `SYSTEM_LEAK_STATUS`, `bmcctld`'s
+> `LEAK_CONTROL_POLICY` dispatch) compare against **upper-case** constants
+> (`NORMAL`/`MINOR`/`CRITICAL`). The bridge therefore normalises every stored
+> `severity`/`leak` value to upper case, so a standards-compliant `Critical`
+> leak alert is recognised rather than silently dropped on a case mismatch.
+
 <sub>[^ Back to Table of Contents](#table-of-contents)</sub>
 
 ---

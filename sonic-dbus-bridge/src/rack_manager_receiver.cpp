@@ -13,6 +13,7 @@
 
 #include <json/json.h>
 
+#include <cctype>
 #include <sstream>
 #include <tuple>
 #include <vector>
@@ -23,6 +24,22 @@ namespace sonic::dbus_bridge
 // Pre-extracted (key, field, value) triples destined for Redis HSET.
 using RedisWrites =
     std::vector<std::tuple<std::string, std::string, std::string>>;
+
+// Normalise a severity string to upper-case ASCII. Redfish clients send the
+// SonicSeverity enum in mixed case (Normal/Minor/Major/Critical), but the
+// platform STATE_DB schema and its consumers (thermalctld's SYSTEM_LEAK_STATUS,
+// bmcctld's LEAK_CONTROL_POLICY dispatch) compare severities against upper-case
+// constants (NORMAL/MINOR/CRITICAL). Normalise at this ingest boundary so a
+// standards-compliant "Critical" leak alert is recognised, not silently
+// dropped on a case mismatch.
+static std::string normalizeSeverity(std::string severity)
+{
+    for (char& c : severity)
+    {
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    return severity;
+}
 
 // ---------------------------------------------------------------------------
 // Unified sensor extraction (SubmitAlert + SubmitTelemetry)
@@ -43,18 +60,20 @@ enum class ExtractMode
 };
 
 // Resolve the effective severity for a node, defaulting to "Normal" (with a
-// WARN) when never supplied along the inheritance chain.
+// WARN) when never supplied along the inheritance chain. The result is
+// upper-case normalised (see normalizeSeverity) to match the platform
+// STATE_DB schema consumed by bmcctld / thermalctld.
 static std::string effectiveSeverity(const std::string& severity,
                                      bool severityFound,
                                      const std::string& nodeKey)
 {
     if (severityFound)
     {
-        return severity;
+        return normalizeSeverity(severity);
     }
     LOG_WARNING("RackManagerReceiver: '%s' missing Severity; defaulting to "
-                "Normal (malformed JSON)", nodeKey.c_str());
-    return "Normal";
+                "NORMAL (malformed JSON)", nodeKey.c_str());
+    return "NORMAL";
 }
 
 // Recursively walk a payload envelope, fanning matches out into per-sensor
