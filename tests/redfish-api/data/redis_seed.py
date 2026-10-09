@@ -35,6 +35,13 @@ DEVICE_METADATA = {
     "model": "TestModel-1000",
 }
 
+# Trusted client identity. The tests authenticate as AUTH in conftest.py, and
+# sonic-dbus-bridge refuses every identity when no trusted list is configured,
+# so the list must name it. Seeded before the bridge starts, which reads it once.
+REDFISH_CERTS = {
+    "client_crt_cname": "bmcweb",
+}
+
 FIRMWARE = {
     "SONIC_OS": {"version": "20240101.100"},
     "BIOS": {"version": "1.0.0-test"},
@@ -65,6 +72,7 @@ def seed(host: str = "localhost", port: int = 6379) -> None:
     # -- CONFIG_DB (4) -------------------------------------------------------
     config_db.flushdb()
     config_db.hset("DEVICE_METADATA|localhost", mapping=DEVICE_METADATA)
+    config_db.hset("REDFISH|certs", mapping=REDFISH_CERTS)
 
     # -- STATE_DB (6) --------------------------------------------------------
     state_db.flushdb()

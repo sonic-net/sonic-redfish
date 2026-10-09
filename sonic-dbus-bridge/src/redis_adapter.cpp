@@ -279,6 +279,35 @@ std::map<std::string, std::string> RedisAdapter::hgetall(redisContext* ctx,
     return result;
 }
 
+std::optional<std::string> RedisAdapter::getRedfishClientCnames()
+{
+    // Read directly rather than through hget(), which cannot distinguish a
+    // field that is not set from a read that failed. That difference decides
+    // whether client certificates are accepted, so it must not be lost.
+    if (!configDbContext_)
+    {
+        return std::nullopt;
+    }
+
+    redisReply* reply = static_cast<redisReply*>(
+        redisCommand(configDbContext_, "HGET %s %s", "REDFISH|certs",
+                     "client_crt_cname"));
+    if (!reply)
+    {
+        return std::nullopt;
+    }
+
+    // Reachable: an unset field reads as an empty list.
+    std::optional<std::string> result = std::string();
+    if (reply->type == REDIS_REPLY_STRING)
+    {
+        result = std::string(reply->str, reply->len);
+    }
+
+    freeReplyObject(reply);
+    return result;
+}
+
 std::optional<std::string> RedisAdapter::hget(redisContext* ctx,
                                                const std::string& key,
                                                const std::string& field)

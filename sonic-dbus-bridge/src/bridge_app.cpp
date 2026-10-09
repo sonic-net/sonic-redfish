@@ -563,7 +563,8 @@ void BridgeApp::initializeUserManager()
         // Create user manager using user connection (separate from inventory/mapper)
         // (scans /etc/passwd on construction)
         userMgr_ = std::make_unique<sonic::user::UserMgr>(
-            *userServer_, "/xyz/openbmc_project/user", objectMapper_.get());
+            *userServer_, "/xyz/openbmc_project/user", objectMapper_.get(),
+            redisAdapter_.get());
 
 	        // Register user manager with ObjectMapper for bmcweb discovery
         if (objectMapper_)

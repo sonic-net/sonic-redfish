@@ -137,6 +137,23 @@ class RedisAdapter
      */
     std::optional<LeakSensorInfo> getLeakSensor(const std::string& name);
 
+    /**
+     * @brief Get the trusted client certificate common names from CONFIG_DB
+     *
+     * Reads REDFISH|certs field client_crt_cname, a comma separated list of
+     * common names accepted for mTLS client authentication. Entries may be
+     * exact names or wildcards of the form *.example.com.
+     *
+     * The result distinguishes three states, because the caller must not
+     * treat an unreadable database as an unconfigured one:
+     *   - a value: the configured list
+     *   - an empty string: CONFIG_DB is readable and the field is not set
+     *   - no value: CONFIG_DB could not be read
+     *
+     * @return the configured value, or std::nullopt when the read failed
+     */
+    std::optional<std::string> getRedfishClientCnames();
+
   private:
     std::string configDbHost_;
     int configDbPort_;

@@ -11,6 +11,7 @@
 
 #include "users.hpp"
 #include "object_mapper.hpp"
+#include "redis_adapter.hpp"
 
 #include <sdbusplus/asio/object_server.hpp>
 
@@ -34,9 +35,12 @@ class UserMgr
      *  @param[in] server        - sdbusplus asio object server
      *  @param[in] path          - D-Bus path
      *  @param[in] objectMapper  - ObjectMapper service for registration (optional)
+     *  @param[in] redisAdapter  - CONFIG_DB access for the trusted client
+     *                             certificate common names (optional)
      */
     UserMgr(sdbusplus::asio::object_server& server, const char* path,
-            sonic::dbus_bridge::ObjectMapperService* objectMapper = nullptr);
+            sonic::dbus_bridge::ObjectMapperService* objectMapper = nullptr,
+            sonic::dbus_bridge::RedisAdapter* redisAdapter = nullptr);
 
     /** @brief Get reference to user objects map
      *
@@ -65,6 +69,9 @@ class UserMgr
     /** @brief ObjectMapper service for user registration */
     sonic::dbus_bridge::ObjectMapperService* objectMapper_;
 
+    /** @brief CONFIG_DB access for the trusted common name list */
+    sonic::dbus_bridge::RedisAdapter* redisAdapter_;
+
     /** @brief User.Manager D-Bus interface */
     std::shared_ptr<sdbusplus::asio::dbus_interface> userMgrIface;
 
@@ -75,29 +82,44 @@ class UserMgr
     /** @brief all groups that can be assigned to users */
     const std::vector<std::string> allGroups = {"redfish"};
 
+    /** @brief trusted common name list, read once and then held */
+    std::string cachedCnames_;
+
+    /** @brief whether cachedCnames_ holds a value read from CONFIG_DB */
+    bool haveCachedCnames_{false};
+
     /** @brief map container to hold users object (only admin) */
     std::unordered_map<std::string, std::unique_ptr<Users>> usersList;
 
     /** @brief initialize the user manager objects
-     *  Creates D-Bus object only for the admin user
+     *  Creates the D-Bus object for the virtual Redfish identity
      */
     void initUserObjects(void);
 
-    /** @brief check if user is enabled
+    /** @brief check the common name against the configured trusted list
      *
-     *  @param[in] userName - name of the user
+     *  Uses the list read from REDFISH|certs client_crt_cname at startup and
+     *  held for the lifetime of the process, as the SONiC REST API server
+     *  does, so changing it takes effect when this service restarts. An unset
+     *  or empty list refuses every common name, as the REST API server does.
+     *  While the list has never been read, requests are also refused rather
+     *  than dropping the check.
      *
-     *  @return true if enabled, false otherwise
+     *  @param[in] commonName - common name taken from the client certificate
+     *
+     *  @return true if the common name is accepted
      */
-    bool isUserEnabled(const std::string& userName);
+    bool isCommonNameTrusted(const std::string& commonName);
 
-    /** @brief check if user exists in usersList
+    /** @brief read the trusted common names from CONFIG_DB and hold them
      *
-     *  @param[in] userName - name of the user
+     *  Called at construction and retried on demand while it has not
+     *  succeeded, mirroring how the REST API server waits for its
+     *  configuration before serving.
      *
-     *  @return true if user exists, false otherwise
+     *  @return true once the list has been read
      */
-    bool isUserExist(const std::string& userName);
+    bool loadTrustedCnames();
 };
 
 } // namespace user
