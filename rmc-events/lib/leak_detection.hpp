@@ -59,6 +59,14 @@ constexpr std::string_view leakSensorBasePath =
     "/xyz/openbmc_project/sensors/leak";
 constexpr std::array<std::string_view, 1> leakDetectorInterfaces = {
     "xyz.openbmc_project.Inventory.Item.LeakDetector"};
+constexpr const char* leakDetectorService =
+    "xyz.openbmc_project.Inventory.Manager";
+constexpr const char* leakDetectorInterface =
+    "xyz.openbmc_project.Inventory.Item.LeakDetector";
+// Functional reflects the sensor hardware (thermalctld leak_sensor_status),
+// not the leak state.
+constexpr const char* leakDetectorOperationalStatusInterface =
+    "xyz.openbmc_project.State.Decorator.OperationalStatus";
 
 // Extract the trailing segment after the last '.' from a D-Bus enum string.
 // e.g. "xyz.openbmc_project.Inventory.Item.LeakDetector.DetectorState.Critical"
@@ -84,6 +92,35 @@ inline resource::Health detectorStateToHealth(const std::string& state)
         return resource::Health::Warning;
     }
     return resource::Health::OK;
+}
+
+// A detector the bridge cannot read (DetectorState Unavailable: thermalctld
+// reports the sensor faulted or its leak state is N/A) or whose hardware is
+// not functional must not look healthy to the Rack Manager: it is reported
+// UnavailableOffline with at least Warning health. A leak that is still
+// known keeps its own, higher, health.
+inline bool leakDetectorUnavailable(const std::string& state, bool functional)
+{
+    return state == "Unavailable" || !functional;
+}
+
+inline void setLeakDetectorStatus(nlohmann::json& json, const std::string& state,
+                                  bool functional)
+{
+    resource::Health health = detectorStateToHealth(state);
+    if (leakDetectorUnavailable(state, functional))
+    {
+        json["Status"]["State"] = resource::State::UnavailableOffline;
+        if (health == resource::Health::OK)
+        {
+            health = resource::Health::Warning;
+        }
+    }
+    else
+    {
+        json["Status"]["State"] = resource::State::Enabled;
+    }
+    json["Status"]["Health"] = health;
 }
 
 // The LeakDetectors collection is served at two URI forms: the canonical
@@ -290,9 +327,8 @@ inline void handleLeakDetectorGet(
                 std::string(leakSensorBasePath) + "/" + detectorId;
 
             dbus::utility::getAllProperties(
-                "xyz.openbmc_project.Inventory.Manager", dbusPath,
-                "xyz.openbmc_project.Inventory.Item.LeakDetector",
-                [asyncResp, chassisId, detectorId, form](
+                leakDetectorService, dbusPath, leakDetectorInterface,
+                [asyncResp, chassisId, detectorId, form, dbusPath](
                     const boost::system::error_code& ec,
                     const dbus::utility::DBusPropertiesMap& properties) {
                     if (ec)
@@ -311,6 +347,7 @@ inline void handleLeakDetectorGet(
                     asyncResp->res.jsonValue["Name"] =
                         "Leak Detector " + detectorId;
 
+                    std::string state;
                     for (const auto& [key, val] : properties)
                     {
                         const std::string* strVal =
@@ -321,13 +358,9 @@ inline void handleLeakDetectorGet(
                         }
                         if (key == "DetectorState")
                         {
-                            std::string state =
-                                getDbusEnumSuffix(*strVal);
+                            state = getDbusEnumSuffix(*strVal);
                             asyncResp->res.jsonValue["DetectorState"] =
                                 state;
-                            asyncResp->res
-                                .jsonValue["Status"]["Health"] =
-                                detectorStateToHealth(state);
                         }
                         else if (key == "Type")
                         {
@@ -336,8 +369,26 @@ inline void handleLeakDetectorGet(
                         }
                     }
 
-                    asyncResp->res.jsonValue["Status"]["State"] =
-                        resource::State::Enabled;
+                    // Status needs the sensor hardware health as well.
+                    dbus::utility::getProperty<bool>(
+                        leakDetectorService, dbusPath,
+                        leakDetectorOperationalStatusInterface, "Functional",
+                        [asyncResp, detectorId,
+                         state](const boost::system::error_code& ec2,
+                                bool functional) {
+                            if (ec2)
+                            {
+                                // Interface not exported: nothing known
+                                // against the hardware, so judge by the
+                                // detector state alone.
+                                BMCWEB_LOG_DEBUG(
+                                    "No OperationalStatus for {}: {}",
+                                    detectorId, ec2.message());
+                                functional = true;
+                            }
+                            setLeakDetectorStatus(asyncResp->res.jsonValue,
+                                                  state, functional);
+                        });
                 });
         });
 }

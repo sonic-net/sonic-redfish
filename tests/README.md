@@ -190,6 +190,7 @@ bridge drains the write asynchronously.
 | [cases/chassis.json](redfish-api/cases/chassis.json)            | inventory fields surfaced from CONFIG_DB `DEVICE_METADATA`                                                                                                     |
 | [cases/oem_manager.json](redfish-api/cases/oem_manager.json)    | OEM RackManager: action discovery, `SubmitAlert` / `SubmitTelemetry` end-to-end into STATE_DB, negative paths (400/401/405) with Redfish error-body assertions |
 | [cases/host_state_event_flow.json](redfish-api/cases/host_state_event_flow.json) | Switch-Host power events driven through `HOST_STATE\|switch-host`, and the unknown state (no `PowerState`, `UnavailableOffline`) before bmcctld publishes it |
+| [cases/leak_event_flow.json](redfish-api/cases/leak_event_flow.json) | Leak events driven through `LIQUID_COOLING_INFO`, and a faulted sensor: `Unavailable`, `UnavailableOffline` / `Warning`, `ResourceStatusChanged*` events |
 
 Event-flow cases drive state with the scripts under
 [redfish-api/framework/](redfish-api/framework/): `trigger_host_state.py`

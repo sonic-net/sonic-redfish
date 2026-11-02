@@ -12,11 +12,13 @@
 """Inject a leak-sensor state change into STATE_DB (db 6).
 
 Usage:
-    trigger_leak.py <sensor_name> <state>      # state: OK | Warning | Critical
+    trigger_leak.py <sensor_name> <state>      # state: OK | Warning | Critical | Unavailable
 
 Writes the LIQUID_COOLING_INFO|<name> fields the way thermalctld does.
 The sonic-dbus-bridge derives the D-Bus DetectorState from
-leaking/leak_severity, and bmcweb turns the change into a Redfish event.
+leaking/leak_severity and Functional from leak_sensor_status, and bmcweb
+turns the change into a Redfish event. Unavailable is a faulted sensor:
+thermalctld writes leaking N/A and leak_sensor_status Fault.
 """
 
 import sys
@@ -27,9 +29,10 @@ STATE_DB = 6
 
 # Detector state -> thermalctld-style LIQUID_COOLING_INFO fields
 STATE_TO_FIELDS = {
-    "OK": {"leaking": "No", "leak_severity": "None"},
-    "Warning": {"leaking": "Yes", "leak_severity": "MINOR"},
-    "Critical": {"leaking": "Yes", "leak_severity": "CRITICAL"},
+    "OK": {"leaking": "No", "leak_severity": "None", "leak_sensor_status": "Good"},
+    "Warning": {"leaking": "Yes", "leak_severity": "MINOR", "leak_sensor_status": "Good"},
+    "Critical": {"leaking": "Yes", "leak_severity": "CRITICAL", "leak_sensor_status": "Good"},
+    "Unavailable": {"leaking": "N/A", "leak_severity": "None", "leak_sensor_status": "Fault"},
 }
 
 
@@ -37,7 +40,6 @@ def set_leak_state(client, sensor_name: str, state: str) -> None:
     """Write LIQUID_COOLING_INFO|<sensor_name> leak fields into STATE_DB."""
     fields = dict(STATE_TO_FIELDS[state])
     fields["leak_status"] = fields["leaking"]  # legacy alias
-    fields["leak_sensor_status"] = "Good"
     client.hset(f"LIQUID_COOLING_INFO|{sensor_name}", mapping=fields)
 
 
