@@ -14,3 +14,4 @@
 0006-Add-libcap-dependency-for-static-libsystemd.patch
 0007-Advertise-canonical-Chassis-LeakDetectors-collection.patch
 0008-Switch-Host-power-events-and-supported-ResetTypes.patch
+0009-Report-unknown-Switch-Host-power-state-until-bmcctld-publishes.patch

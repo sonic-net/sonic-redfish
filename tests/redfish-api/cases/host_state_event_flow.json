@@ -12,12 +12,14 @@
         "Destination": "{{RMC.LISTENER_URL}}",
         "Protocol": "Redfish",
         "Context": "RMC-HostStateTest",
-        "ResourceTypes": ["ComputerSystem"]
+        "ResourceTypes": [
+          "ComputerSystem"
+        ]
       }
     },
     "trigger": [
       {
-        "description": "bmcctld reports POWERED_OFF/OFFLINE in HOST_STATE|switch-host (the bridge starts from Running when the key is absent).",
+        "description": "bmcctld reports POWERED_OFF/OFFLINE in HOST_STATE|switch-host (the seed publishes POWERED_ON/ONLINE, so this is a real Running -> Off transition).",
         "run": "tests/redfish-api/framework/trigger_host_state.py Off"
       }
     ],
@@ -25,10 +27,26 @@
       "description": "Within 15s a ResourcePoweredOff event (severity OK) must arrive with OriginOfCondition pointing at the ComputerSystem this BMC serves.",
       "timeout_seconds": 15,
       "validators": [
-        {"type": "equals", "path": "Events[0].MessageId", "value": "ResourceEvent.1.3.0.ResourcePoweredOff"},
-        {"type": "equals", "path": "Events[0].Severity", "value": "OK"},
-        {"type": "equals", "path": "Events[0].MessageArgs[0]", "value": "system"},
-        {"type": "equals", "path": "Events[0].OriginOfCondition.@odata.id", "value": "/redfish/v1/Systems/system"}
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "ResourceEvent.1.3.0.ResourcePoweredOff"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "OK"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].MessageArgs[0]",
+          "value": "system"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Systems/system"
+        }
       ]
     },
     "teardown": {
@@ -49,7 +67,9 @@
         "Destination": "{{RMC.LISTENER_URL}}",
         "Protocol": "Redfish",
         "Context": "RMC-HostStateTest",
-        "ResourceTypes": ["ComputerSystem"]
+        "ResourceTypes": [
+          "ComputerSystem"
+        ]
       }
     },
     "trigger": [
@@ -70,9 +90,21 @@
       "description": "Within 15s a ResourcePoweredOn event (severity OK) must arrive; the intermediate PoweredOff event is skipped by the matcher.",
       "timeout_seconds": 15,
       "validators": [
-        {"type": "equals", "path": "Events[0].MessageId", "value": "ResourceEvent.1.3.0.ResourcePoweredOn"},
-        {"type": "equals", "path": "Events[0].Severity", "value": "OK"},
-        {"type": "equals", "path": "Events[0].OriginOfCondition.@odata.id", "value": "/redfish/v1/Systems/system"}
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "ResourceEvent.1.3.0.ResourcePoweredOn"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "OK"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Systems/system"
+        }
       ]
     },
     "teardown": {
@@ -93,7 +125,9 @@
         "Destination": "{{RMC.LISTENER_URL}}",
         "Protocol": "Redfish",
         "Context": "RMC-HostStateTest",
-        "ResourceTypes": ["ComputerSystem"]
+        "ResourceTypes": [
+          "ComputerSystem"
+        ]
       }
     },
     "trigger": [
@@ -106,12 +140,82 @@
       "description": "Within 15s a ResourcePoweringOff event must arrive for the ComputerSystem.",
       "timeout_seconds": 15,
       "validators": [
-        {"type": "equals", "path": "Events[0].MessageId", "value": "ResourceEvent.1.3.0.ResourcePoweringOff"},
-        {"type": "equals", "path": "Events[0].OriginOfCondition.@odata.id", "value": "/redfish/v1/Systems/system"}
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "ResourceEvent.1.3.0.ResourcePoweringOff"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Systems/system"
+        }
       ]
     },
     "teardown": {
       "description": "Restore the Switch-Host to On.",
+      "run": "tests/redfish-api/framework/trigger_host_state.py On"
+    }
+  },
+  {
+    "name": "host_state_unknown_until_bmcctld_reports",
+    "description": "Before bmcctld publishes HOST_STATE|switch-host the Switch-Host state is unknown: the ComputerSystem and the Chassis report no PowerState and Status.State UnavailableOffline, and the first row bmcctld writes sets the real state and reaches the RMC as ResourcePoweredOn.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers a push (webhook) subscription filtered on ResourceTypes=[ComputerSystem].",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-HostStateTest",
+        "ResourceTypes": [
+          "ComputerSystem"
+        ]
+      }
+    },
+    "trigger": [
+      {
+        "description": "Delete the row and restart the bridge, as on a BMC where the bridge starts before bmcctld has published.",
+        "run": "tests/redfish-api/framework/restart_bridge.py --without-host-state"
+      },
+      {
+        "description": "The ComputerSystem claims no PowerState and reports UnavailableOffline.",
+        "run": "tests/redfish-api/framework/assert_get.py /redfish/v1/Systems/system '[{\"type\":\"not_exists\",\"path\":\"PowerState\"},{\"type\":\"equals\",\"path\":\"Status.State\",\"value\":\"UnavailableOffline\"}]'"
+      },
+      {
+        "description": "The Chassis, whose power state is derived from the Switch-Host, does the same.",
+        "run": "tests/redfish-api/framework/assert_get.py /redfish/v1/Chassis/chassis '[{\"type\":\"not_exists\",\"path\":\"PowerState\"},{\"type\":\"equals\",\"path\":\"Status.State\",\"value\":\"UnavailableOffline\"}]'"
+      },
+      {
+        "description": "bmcctld publishes its first row: POWERED_ON/ONLINE.",
+        "run": "tests/redfish-api/framework/trigger_host_state.py On"
+      }
+    ],
+    "expect_event": {
+      "description": "Within 15s a ResourcePoweredOn event must arrive for the ComputerSystem: the unknown state itself produced no event, the first published state does.",
+      "timeout_seconds": 15,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "ResourceEvent.1.3.0.ResourcePoweredOn"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "OK"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Systems/system"
+        }
+      ]
+    },
+    "teardown": {
+      "description": "Leave the Switch-Host at On.",
       "run": "tests/redfish-api/framework/trigger_host_state.py On"
     }
   }

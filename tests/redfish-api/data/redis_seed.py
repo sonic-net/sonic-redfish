@@ -49,6 +49,16 @@ FIRMWARE = {
 
 CHASSIS_STATE = {"power_state": "on"}
 
+# HOST_STATE|switch-host as bmcctld publishes it once it has read the
+# Switch-Host module, so the suite starts from a settled On. Cases that need
+# the window before bmcctld publishes delete the row and restart the bridge
+# (framework/restart_bridge.py --without-host-state).
+HOST_STATE = {
+    "device_power_state": "POWERED_ON",
+    "device_status": "ONLINE",
+    "last_change_timestamp": "2026-01-01 00:00:00",
+}
+
 # LIQUID_COOLING_INFO|<name> mirrors what thermalctld writes.
 LEAK_SENSORS = {
     "leak_sensor_1": {
@@ -77,6 +87,7 @@ def seed(host: str = "localhost", port: int = 6379) -> None:
     # -- STATE_DB (6) --------------------------------------------------------
     state_db.flushdb()
     state_db.hset("CHASSIS_STATE|chassis0", mapping=CHASSIS_STATE)
+    state_db.hset("HOST_STATE|switch-host", mapping=HOST_STATE)
     for name, fields in FIRMWARE.items():
         state_db.hset(f"BMC_FW_INVENTORY|{name}", mapping=fields)
     for name, fields in LEAK_SENSORS.items():

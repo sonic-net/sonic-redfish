@@ -686,6 +686,13 @@ which is what `GET /redfish/v1/Systems/system` reports as `PowerState`:
 | any stable state          | conflicting     | follows `device_status`   |                      |
 | unrecognised              | `ONLINE`/`OFFLINE` | `Running`/`Off`        |                      |
 | unrecognised              | unrecognised    | unchanged                 |                      |
+| row absent at startup     | -               | `Unknown`                 | omitted, `Status.State` `UnavailableOffline` |
+
+Until `sonic-bmcctld` has published `HOST_STATE|switch-host` the bridge
+reports the dedicated `Unknown` value rather than guessing, and
+`GET /redfish/v1/Chassis/chassis` (whose power state is derived from the
+Switch-Host) does the same. The first published row sets the real state
+and emits the matching event; the unknown state itself emits none.
 
 Only the `ResetType` values below are accepted. Any other value (e.g.
 `ForceOn`, `ForceRestart`, `GracefulRestart`, `Nmi`) returns

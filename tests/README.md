@@ -189,6 +189,15 @@ bridge drains the write asynchronously.
 | [cases/service_root.json](redfish-api/cases/service_root.json)  | `/redfish/v1/`, `Product=SONiCBMC-<base MAC>` (base MAC from CONFIG_DB), auth enforcement                                                                       |
 | [cases/chassis.json](redfish-api/cases/chassis.json)            | inventory fields surfaced from CONFIG_DB `DEVICE_METADATA`                                                                                                     |
 | [cases/oem_manager.json](redfish-api/cases/oem_manager.json)    | OEM RackManager: action discovery, `SubmitAlert` / `SubmitTelemetry` end-to-end into STATE_DB, negative paths (400/401/405) with Redfish error-body assertions |
+| [cases/host_state_event_flow.json](redfish-api/cases/host_state_event_flow.json) | Switch-Host power events driven through `HOST_STATE\|switch-host`, and the unknown state (no `PowerState`, `UnavailableOffline`) before bmcctld publishes it |
+
+Event-flow cases drive state with the scripts under
+[redfish-api/framework/](redfish-api/framework/): `trigger_host_state.py`
+and `trigger_leak.py` write STATE_DB the way the platform daemons do,
+`restart_bridge.py` restarts `sonic-dbus-bridge` inside the container
+(optionally after deleting `HOST_STATE|switch-host`), and `assert_get.py`
+polls a Redfish GET until a list of validators passes, so a case can assert
+resource state between two triggers.
 
 > **Note:** Skipped modules use `"skip": true` or similar logic in the
 > framework if needed.
