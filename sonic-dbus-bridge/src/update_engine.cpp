@@ -11,7 +11,10 @@
 #include "update_engine.hpp"
 #include "host_state_mapping.hpp"
 #include "inventory_model.hpp"
+#include "leak_sensor_sync.hpp"
 #include "logger.hpp"
+
+#include <boost/asio/post.hpp>
 
 namespace sonic::dbus_bridge
 {
@@ -258,31 +261,13 @@ void UpdateEngine::onRedisFieldChange(const std::string& key,
             {
                 LOG_WARNING("[UpdateEngine] Leak sensor %s not found in Redis",
                             sensorName.c_str());
+                return;
             }
-            else
-            {
-                // Track the derived detector state plus sensor health so a
-                // change in either drives a D-Bus PropertiesChanged signal.
-                std::string newState = sensor->detectorState() +
-                                       (sensor->functional() ? "" : "|Fault");
 
-                auto it = cachedLeakStates_.find(sensorName);
-                if (it == cachedLeakStates_.end() || it->second != newState)
-                {
-                    LOG_INFO("[UpdateEngine] Leak sensor %s state: %s -> %s",
-                             sensorName.c_str(),
-                             it != cachedLeakStates_.end() ? it->second.c_str() : "(none)",
-                             newState.c_str());
-
-                    cachedLeakStates_[sensorName] = newState;
-                    dbusExporter_->updateLeakSensorState(*sensor);
-                }
-                else
-                {
-                    LOG_DEBUG("[UpdateEngine] Leak sensor %s state unchanged (%s)",
-                              sensorName.c_str(), newState.c_str());
-                }
-            }
+            // D-Bus objects and the ObjectMapper registry are owned by the
+            // io_context thread; this callback runs on the subscriber thread.
+            postLeakSensor(*sensor);
+            return;
         }
         else
         {
@@ -321,6 +306,52 @@ void UpdateEngine::onRedisFieldChange(const std::string& key,
     {
         LOG_ERROR("[UpdateEngine] Error handling Redis field change: %s", e.what());
     }
+}
+
+void UpdateEngine::syncLeakSensors()
+{
+    for (const auto& sensor : redisAdapter_->getLeakSensors())
+    {
+        postLeakSensor(sensor);
+    }
+}
+
+void UpdateEngine::postLeakSensor(const LeakSensorInfo& sensor)
+{
+    boost::asio::post(io_, [this, sensor]() {
+        std::string newState = leak_sync::trackedLeakState(sensor);
+
+        std::optional<std::string> cached;
+        if (auto it = cachedLeakStates_.find(sensor.name);
+            it != cachedLeakStates_.end())
+        {
+            cached = it->second;
+        }
+
+        switch (leak_sync::decideLeakSensorAction(
+            dbusExporter_->hasLeakSensor(sensor.name), cached, newState))
+        {
+            case leak_sync::LeakSensorAction::Create:
+                LOG_INFO("[UpdateEngine] New leak sensor %s (%s)",
+                         sensor.name.c_str(), newState.c_str());
+                if (dbusExporter_->addLeakSensorObject(sensor))
+                {
+                    cachedLeakStates_[sensor.name] = newState;
+                }
+                break;
+            case leak_sync::LeakSensorAction::Update:
+                LOG_INFO("[UpdateEngine] Leak sensor %s state: %s -> %s",
+                         sensor.name.c_str(),
+                         cached ? cached->c_str() : "(none)", newState.c_str());
+                cachedLeakStates_[sensor.name] = newState;
+                dbusExporter_->updateLeakSensorState(sensor);
+                break;
+            case leak_sync::LeakSensorAction::None:
+                LOG_DEBUG("[UpdateEngine] Leak sensor %s state unchanged (%s)",
+                          sensor.name.c_str(), newState.c_str());
+                break;
+        }
+    });
 }
 
 } // namespace sonic::dbus_bridge

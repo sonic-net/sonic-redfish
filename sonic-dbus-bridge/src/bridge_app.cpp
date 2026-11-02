@@ -370,6 +370,16 @@ void BridgeApp::createDbusObjects()
         LOG_WARNING("Failed to create some D-Bus objects");
     }
 
+    // Leak sensors that appear after startup are registered from here.
+    dbusExporter_->setObjectRegistrar(
+        [this](const std::string& path,
+               const std::vector<std::string>& interfaces) {
+            if (objectMapper_)
+            {
+                objectMapper_->registerObject(path, interfaces);
+            }
+        });
+
     // Register the objects we own with the local ObjectMapper so that
     // bmcweb can discover them using GetSubTree* calls.
     if (objectMapper_)
@@ -471,16 +481,11 @@ void BridgeApp::startUpdateEngine()
         "DEVICE_METADATA",        // Serial number, platform, hostname
         "CHASSIS_STATE",          // Power state
         "HOST_STATE|switch-host", // Host power state (bmcctld)
-        "RACK_MANAGER_COMMAND|*"  // Command results (bmcctld DONE/FAILED)
+        "RACK_MANAGER_COMMAND|*", // Command results (bmcctld DONE/FAILED)
+        // Pattern rather than the sensors found at startup: thermalctld can
+        // publish these rows after the bridge has read STATE_DB.
+        "LIQUID_COOLING_INFO|*"   // Leak sensors (thermalctld)
     };
-
-    // Dynamically add leak sensor keys discovered at startup
-    for (const auto& sensor : currentModel_.leakSensors)
-    {
-        keysToSubscribe.push_back("LIQUID_COOLING_INFO|" + sensor.name);
-        LOG_INFO("Subscribing to leak sensor key: LIQUID_COOLING_INFO|%s",
-                 sensor.name.c_str());
-    }
 
     // Register callback to UpdateEngine
     auto callback = [this](const std::string& key,
@@ -489,6 +494,11 @@ void BridgeApp::startUpdateEngine()
         // Forward Redis events to UpdateEngine
         updateEngine_->onRedisFieldChange(key, field, value);
     };
+
+    // Close the window between the startup read and the subscription.
+    redisSubscriber_->setSubscribedCallback([this]() {
+        updateEngine_->syncLeakSensors();
+    });
 
     // Start subscriber with multiple keys (use STATE_DB connection)
     bool started = redisSubscriber_->startMultiKey(
