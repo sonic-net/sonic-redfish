@@ -7,6 +7,7 @@ Build-Depends: debhelper-compat (= 13),
                pkg-config,
                libsystemd-dev,
                libhiredis-dev,
+               libswsscommon-dev,
                libjsoncpp-dev,
                libboost-dev,
                libboost-system-dev
@@ -16,6 +17,8 @@ Homepage: https://github.com/sonic-net/sonic-redfish
 Package: sonic-dbus-bridge
 Architecture: any
 Depends: ${misc:Depends},
+         ${shlibs:Depends},
+         libswsscommon,
          libsystemd0,
          libhiredis1.1.0,
          libjsoncpp26,

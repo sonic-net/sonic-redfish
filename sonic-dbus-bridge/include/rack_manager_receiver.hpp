@@ -65,7 +65,7 @@ class RackManagerReceiver
      * @param redisDbIndex STATE_DB index (Redis SELECT target)
      */
     RackManagerReceiver(sdbusplus::asio::object_server& server,
-                        const std::string& redisHost = "localhost",
+                        const std::string& redisHost = "",
                         int redisPort = 6379, int redisDbIndex = 6);
     ~RackManagerReceiver();
 

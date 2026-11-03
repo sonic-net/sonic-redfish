@@ -10,6 +10,7 @@
 #include "rack_manager_receiver.hpp"
 #include "bridge_utils.hpp"
 #include "logger.hpp"
+#include "redis_connection.hpp"
 
 #include <json/json.h>
 
@@ -286,39 +287,9 @@ bool RackManagerReceiver::initialize()
 // ---------------------------------------------------------------------------
 bool RackManagerReceiver::connectRedis()
 {
-    struct timeval timeout = {2, 0};
-
-    redisCtx_ = redisConnectWithTimeout(redisHost_.c_str(), redisPort_,
-                                        timeout);
-    if (redisCtx_ && redisCtx_->err)
-    {
-        LOG_WARNING("RackManagerReceiver: TCP connect failed: %s",
-                    redisCtx_->errstr);
-        redisFree(redisCtx_);
-        redisCtx_ = nullptr;
-    }
-
+    redisCtx_ = connectRedisEndpoint("STATE_DB", redisHost_, redisPort_);
     if (!redisCtx_)
     {
-        const char* sockets[] = {
-            "/var/run/redis/redis.sock",
-            "/run/redis/redis.sock",
-            "/var/run/redis.sock",
-            nullptr};
-        for (int i = 0; sockets[i] && !redisCtx_; ++i)
-        {
-            redisCtx_ = redisConnectUnixWithTimeout(sockets[i], timeout);
-            if (redisCtx_ && redisCtx_->err)
-            {
-                redisFree(redisCtx_);
-                redisCtx_ = nullptr;
-            }
-        }
-    }
-
-    if (!redisCtx_)
-    {
-        LOG_ERROR("RackManagerReceiver: All Redis connection attempts failed");
         return false;
     }
 

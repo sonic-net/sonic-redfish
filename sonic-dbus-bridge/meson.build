@@ -61,6 +61,7 @@ conf_header = configure_file(output: 'config.h', configuration: conf_data)
 # Dependencies
 systemd_dep = dependency('libsystemd')
 hiredis_dep = dependency('hiredis')
+swsscommon_dep = meson.get_compiler('cpp').find_library('swsscommon', required: true)
 jsoncpp_dep = dependency('jsoncpp')
 boost_dep = dependency('boost', modules: ['system'])
 threads_dep = dependency('threads')
@@ -96,6 +97,23 @@ sources = files(
 # Include directories
 inc = include_directories('include')
 
+if meson.can_run_host_binaries()
+    redis_probe = executable(
+        'redis-connection-probe',
+        'tests/redis_connection_probe.cpp',
+        include_directories: inc,
+        dependencies: [hiredis_dep, swsscommon_dep, threads_dep],
+        install: false,
+    )
+    test(
+        'redis-connection',
+        find_program('python3'),
+        args: [files('tests/test_redis_connection.py'), redis_probe],
+        is_parallel: false,
+        timeout: 60,
+    )
+endif
+
 # Executable
 executable(
     'sonic-dbus-bridge',
@@ -105,6 +123,7 @@ executable(
     dependencies: [
         systemd_dep,
         hiredis_dep,
+        swsscommon_dep,
         jsoncpp_dep,
         boost_dep,
         threads_dep,
