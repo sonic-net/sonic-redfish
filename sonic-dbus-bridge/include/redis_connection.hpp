@@ -48,7 +48,7 @@ inline redisContext* connectRedisEndpoint(const std::string& database,
             return nullptr;
         }
         const timeval timeout{2, 0};
-        if (context && redisSetTimeout(context, timeout) != REDIS_OK)
+        if (host.empty() && context && redisSetTimeout(context, timeout) != REDIS_OK)
         {
             LOG_ERROR("Cannot set Redis command timeout for %s", database.c_str());
             redisFree(context);
