@@ -32,14 +32,14 @@ class RedisAdapter
     /**
      * @brief Construct a new Redis Adapter
      * 
-     * @param configDbHost CONFIG_DB host (default: localhost)
+     * @param configDbHost CONFIG_DB host (empty selects the configured local socket)
      * @param configDbPort CONFIG_DB port (default: 6379)
-     * @param stateDbHost STATE_DB host (default: localhost)
+     * @param stateDbHost STATE_DB host (empty selects the configured local socket)
      * @param stateDbPort STATE_DB port (default: 6379)
      */
-    RedisAdapter(const std::string& configDbHost = "localhost",
+    RedisAdapter(const std::string& configDbHost = "",
                  int configDbPort = 6379,
-                 const std::string& stateDbHost = "localhost",
+                 const std::string& stateDbHost = "",
                  int stateDbPort = 6379);
 
     ~RedisAdapter();

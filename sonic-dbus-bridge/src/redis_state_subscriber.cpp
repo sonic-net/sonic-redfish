@@ -10,93 +10,17 @@
 
 #include "redis_state_subscriber.hpp"
 #include "logger.hpp"
+#include "redis_connection.hpp"
 #include <cstring>
 
 namespace
 {
 
-// Helper to connect to Redis using TCP first, then fall back to common Unix socket paths.
-// This mirrors the resilient strategy used by RedisAdapter so that the bridge can work
-// in containers which only have the Redis Unix socket mounted (e.g., docker-sonic-redfish
-// with bridge networking).
-redisContext* connectRedisWithFallback(const std::string& host,
-                                       int port,
-                                       const char* contextName)
+redisContext* connectStateRedis(const std::string& host, int port,
+                                const char* contextName)
 {
-    struct timeval timeout = {2, 0}; // 2 seconds
-    redisContext* ctx = nullptr;
-    bool connected = false;
-
-    // Try TCP first
-    LOG_DEBUG("[RedisStateSubscriber] Attempting TCP connection (%s) to %s:%d...",
-              contextName, host.c_str(), port);
-    ctx = redisConnectWithTimeout(host.c_str(), port, timeout);
-
-    if (!ctx)
-    {
-        LOG_ERROR("[RedisStateSubscriber] TCP (%s): Failed to allocate Redis context",
-                  contextName);
-    }
-    else if (ctx->err)
-    {
-        LOG_DEBUG("[RedisStateSubscriber] TCP (%s): Connection failed: %s (errno: %d)",
-                  contextName, ctx->errstr, ctx->err);
-        redisFree(ctx);
-        ctx = nullptr;
-    }
-    else
-    {
-        LOG_INFO("[RedisStateSubscriber] Connected to Redis via TCP (%s): %s:%d",
-                 contextName, host.c_str(), port);
-        connected = true;
-    }
-
-    // If TCP failed, try common Unix socket locations
-    if (!connected)
-    {
-        const char* unixSockets[] = {
-            "/var/run/redis/redis.sock",
-            "/run/redis/redis.sock",
-            "/var/run/redis.sock",
-            nullptr
-        };
-
-        for (int i = 0; unixSockets[i] != nullptr && !connected; ++i)
-        {
-            LOG_DEBUG("[RedisStateSubscriber] Attempting Unix socket (%s) connection to %s...",
-                      contextName, unixSockets[i]);
-
-            ctx = redisConnectUnixWithTimeout(unixSockets[i], timeout);
-
-            if (!ctx)
-            {
-                LOG_ERROR("[RedisStateSubscriber] Unix socket (%s): Failed to allocate Redis context",
-                          contextName);
-            }
-            else if (ctx->err)
-            {
-                LOG_DEBUG("[RedisStateSubscriber] Unix socket (%s): Connection failed: %s (errno: %d)",
-                          contextName, ctx->errstr, ctx->err);
-                redisFree(ctx);
-                ctx = nullptr;
-            }
-            else
-            {
-                LOG_INFO("[RedisStateSubscriber] Connected to Redis via Unix socket (%s): %s",
-                         contextName, unixSockets[i]);
-                connected = true;
-            }
-        }
-    }
-
-    if (!connected || !ctx)
-    {
-        LOG_ERROR("[RedisStateSubscriber] All Redis connection attempts (%s) failed",
-                  contextName);
-        return nullptr;
-    }
-
-    return ctx;
+    LOG_DEBUG("[RedisStateSubscriber] Connecting %s context", contextName);
+    return sonic::dbus_bridge::connectRedisEndpoint("STATE_DB", host, port);
 }
 
 } // anonymous namespace
@@ -131,8 +55,8 @@ bool RedisStateSubscriber::start(const std::string& host, int port,
     
     callback_ = callback;
     
-    // Create subscription context (TCP + Unix socket fallback)
-    subContext_ = connectRedisWithFallback(host, port, "subscribe");
+    // Create subscription context (explicit configured transport)
+    subContext_ = connectStateRedis(host, port, "subscribe");
     if (!subContext_)
     {
         LOG_ERROR( "[RedisStateSubscriber] Subscription connection failed");
@@ -141,8 +65,8 @@ bool RedisStateSubscriber::start(const std::string& host, int port,
     
     LOG_INFO( "[RedisStateSubscriber] Subscription connection established");
     
-    // Create GET context (for HGETALL) with the same fallback logic
-    getContext_ = connectRedisWithFallback(host, port, "get");
+    // Create GET context (for HGETALL) with the same explicit transport
+    getContext_ = connectStateRedis(host, port, "get");
     if (!getContext_)
     {
         LOG_ERROR( "[RedisStateSubscriber] GET connection failed");
@@ -235,16 +159,16 @@ bool RedisStateSubscriber::startMultiKey(const std::string& host, int port,
     callback_ = callback;
 
     // Create two Redis contexts: one for subscribing, one for getting data.
-    // Use TCP + Unix socket fallback so we can connect in bridge-networked containers
+    // Use explicit configured transport so we can connect in bridge-networked containers
     // that only expose Redis via Unix sockets.
-    subContext_ = connectRedisWithFallback(host, port, "subscribe");
+    subContext_ = connectStateRedis(host, port, "subscribe");
     if (!subContext_)
     {
         LOG_ERROR( "[RedisStateSubscriber] Failed to connect to Redis (subscribe)");
         return false;
     }
 
-    getContext_ = connectRedisWithFallback(host, port, "get");
+    getContext_ = connectStateRedis(host, port, "get");
     if (!getContext_)
     {
         LOG_ERROR( "[RedisStateSubscriber] Failed to connect to Redis (get)");

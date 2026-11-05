@@ -11,6 +11,7 @@
 #include "redis_adapter.hpp"
 #include "host_state_mapping.hpp"
 #include "logger.hpp"
+#include "redis_connection.hpp"
 #include <cstring>
 #include <fstream>
 
@@ -68,66 +69,10 @@ bool RedisAdapter::connect()
 
 redisContext* RedisAdapter::connectToDb(const std::string& host, int port, int dbIndex)
 {
-    struct timeval timeout = {2, 0}; // 2 seconds
-    redisContext* ctx = nullptr;
-    bool connected = false;
-
-    // Try TCP connection first (most reliable for SONiC)
-    LOG_DEBUG("Attempting TCP connection to %s:%d...", host.c_str(), port);
-    ctx = redisConnectWithTimeout(host.c_str(), port, timeout);
-
+    redisContext* ctx = connectRedisEndpoint(
+        dbIndex == 4 ? "CONFIG_DB" : "STATE_DB", host, port);
     if (!ctx)
     {
-        LOG_ERROR("TCP: Failed to allocate Redis context (out of memory?)");
-    }
-    else if (ctx->err)
-    {
-        LOG_DEBUG("TCP: Connection failed: %s (errno: %d)", ctx->errstr, ctx->err);
-        redisFree(ctx);
-        ctx = nullptr;
-    }
-    else
-    {
-        LOG_INFO("Connected to Redis via TCP: %s:%d", host.c_str(), port);
-        connected = true;
-    }
-
-    // If TCP failed, try Unix socket as fallback
-    if (!connected)
-    {
-        const char* unixSockets[] = {
-            "/var/run/redis/redis.sock",
-            "/run/redis/redis.sock",
-            "/var/run/redis.sock",
-            nullptr
-        };
-
-        for (int i = 0; unixSockets[i] != nullptr && !connected; i++)
-        {
-            LOG_DEBUG("Attempting Unix socket connection to %s...", unixSockets[i]);
-            ctx = redisConnectUnixWithTimeout(unixSockets[i], timeout);
-
-            if (!ctx)
-            {
-                LOG_ERROR("Unix socket: Failed to allocate Redis context");
-            }
-            else if (ctx->err)
-            {
-                LOG_DEBUG("Unix socket: Connection failed: %s (errno: %d)", ctx->errstr, ctx->err);
-                redisFree(ctx);
-                ctx = nullptr;
-            }
-            else
-            {
-                LOG_INFO("Connected to Redis via Unix socket: %s", unixSockets[i]);
-                connected = true;
-            }
-        }
-    }
-
-    if (!connected || !ctx)
-    {
-        LOG_ERROR("All Redis connection attempts failed");
         return nullptr;
     }
 
