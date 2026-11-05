@@ -3,6 +3,7 @@
 #include "logger.hpp"
 #include <hiredis/hiredis.h>
 #include <swss/dbconnector.h>
+#include <swss/redissocket.h>
 #include <unistd.h>
 
 namespace sonic::dbus_bridge
@@ -21,7 +22,7 @@ inline redisContext* connectRedisEndpoint(const std::string& database,
         if (host.empty())
         {
             const auto socket = swss::SonicDBConfig::getDbSock(database);
-            descriptor = swss::openRedisUnixSocket(socket, 2000, 2000);
+            descriptor = swss::openRedisUnixSocket(socket, 2000, true);
             context = redisConnectFd(descriptor);
             if (context)
             {
@@ -30,7 +31,6 @@ inline redisContext* connectRedisEndpoint(const std::string& database,
         }
         else
         {
-            swss::checkRedisTcpEndpoint(host, port);
             const timeval timeout{2, 0};
             context = redisConnectWithTimeout(host.c_str(), port, timeout);
         }
@@ -44,6 +44,13 @@ inline redisContext* connectRedisEndpoint(const std::string& database,
         {
             LOG_ERROR("Redis connection failed for %s: %s", database.c_str(),
                       context->errstr);
+            redisFree(context);
+            return nullptr;
+        }
+        const timeval timeout{2, 0};
+        if (context && redisSetTimeout(context, timeout) != REDIS_OK)
+        {
+            LOG_ERROR("Cannot set Redis command timeout for %s", database.c_str());
             redisFree(context);
             return nullptr;
         }
