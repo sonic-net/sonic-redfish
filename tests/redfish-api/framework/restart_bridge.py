@@ -51,7 +51,9 @@ POLL = 0.5
 
 
 def _bridge_pids():
-    out = subprocess.run(["pgrep", "-x", BRIDGE_BINARY],
+    # Match the command line: the kernel truncates the process name to 15
+    # characters, so "pgrep -x sonic-dbus-bridge" never matches.
+    out = subprocess.run(["pgrep", "-f", f"^{BRIDGE_BINARY}( |$)"],
                          capture_output=True, text=True).stdout.split()
     return [int(p) for p in out]
 
