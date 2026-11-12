@@ -50,12 +50,62 @@ START_TIMEOUT = 60
 POLL = 0.5
 
 
-def _bridge_pids():
-    # Match the command line: the kernel truncates the process name to 15
-    # characters, so "pgrep -x sonic-dbus-bridge" never matches.
-    out = subprocess.run(["pgrep", "-f", f"^{BRIDGE_BINARY}( |$)"],
-                         capture_output=True, text=True).stdout.split()
-    return [int(p) for p in out]
+def _bus_owner_pid(name):
+    """PID of the process owning a bus name, or None if it has no owner.
+
+    Any other failure raises, so "cannot tell" is never read as "stopped".
+    """
+    res = subprocess.run(
+        ["dbus-send", "--system", "--dest=org.freedesktop.DBus", "--print-reply",
+         "/org/freedesktop/DBus", "org.freedesktop.DBus.GetConnectionUnixProcessID",
+         f"string:{name}"],
+        capture_output=True, text=True)
+    if res.returncode != 0:
+        if "org.freedesktop.DBus.Error.NameHasNoOwner" in res.stderr:
+            return None
+        raise RuntimeError(f"cannot look up the owner of {name}: {res.stderr.strip()}")
+    fields = res.stdout.split()
+    if len(fields) < 2 or fields[-2] != "uint32" or not fields[-1].isdigit():
+        raise RuntimeError(f"unexpected GetConnectionUnixProcessID reply: {res.stdout!r}")
+    return int(fields[-1])
+
+
+def _pid_alive(pid):
+    """True while pid exists and is not a zombie (a zombie has exited)."""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            stat = f.read()
+    except FileNotFoundError:
+        return False
+    # Fields after the parenthesised command name; the first is the state.
+    return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+
+def _bridge_pid():
+    """PID of the running sonic-dbus-bridge, or None if it is not running.
+
+    The bridge is the process that owns State.Host; its executable is checked
+    before it is signalled so an unrelated process is never killed.
+    """
+    pid = _bus_owner_pid(STATE_HOST_BUS_NAME)
+    if pid is None:
+        return None
+    try:
+        exe = os.readlink(f"/proc/{pid}/exe")
+    except FileNotFoundError:
+        return None  # exited between the two lookups
+    exe = exe.removesuffix(" (deleted)")
+    if os.path.basename(exe) != BRIDGE_BINARY:
+        raise RuntimeError(f"{STATE_HOST_BUS_NAME} is owned by pid {pid} ({exe}), "
+                           f"not {BRIDGE_BINARY}")
+    return pid
+
+
+def _signal(pid, sig):
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        pass
 
 
 def _bus_name_owned(name):
@@ -84,17 +134,17 @@ def _redfish_answers():
 
 
 def stop_bridge():
-    pids = _bridge_pids()
-    for pid in pids:
-        os.kill(pid, signal.SIGTERM)
-    if not _wait_until(lambda: not _bridge_pids(), STOP_TIMEOUT):
-        for pid in _bridge_pids():
-            os.kill(pid, signal.SIGKILL)
-        if not _wait_until(lambda: not _bridge_pids(), STOP_TIMEOUT):
-            raise RuntimeError("sonic-dbus-bridge did not stop")
-    if not _wait_until(lambda: not _bus_name_owned(STATE_HOST_BUS_NAME), STOP_TIMEOUT):
+    pid = _bridge_pid()
+    if pid is None:
+        return []
+    _signal(pid, signal.SIGTERM)
+    if not _wait_until(lambda: not _pid_alive(pid), STOP_TIMEOUT):
+        _signal(pid, signal.SIGKILL)
+        if not _wait_until(lambda: not _pid_alive(pid), STOP_TIMEOUT):
+            raise RuntimeError(f"sonic-dbus-bridge (pid {pid}) did not stop")
+    if not _wait_until(lambda: _bus_owner_pid(STATE_HOST_BUS_NAME) is None, STOP_TIMEOUT):
         raise RuntimeError(f"{STATE_HOST_BUS_NAME} still owned after the bridge stopped")
-    return pids
+    return [pid]
 
 
 def start_bridge():
