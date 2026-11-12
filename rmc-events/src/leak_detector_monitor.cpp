@@ -13,8 +13,9 @@
 // objects into Redfish events using the Environmental message registry
 // (LeakDetectedCritical, LeakDetectedWarning, LeakDetectedNormal). A
 // detector that becomes Unavailable (the sensor faulted or unreadable) is
-// reported with ResourceEvent ResourceStatusChangedWarning, and
-// ResourceStatusChangedOK when it is readable again.
+// reported with ResourceEvent ResourceStatusChangedWarning, and with the
+// ResourceStatusChanged message for the health it comes back with (OK or
+// Critical) when it is readable again.
 //
 // Events are delivered to subscribers via EventServiceManager::sendEvent().
 
@@ -58,25 +59,25 @@ static std::string leakDetectorOriginUri(const std::string& sensorName)
            sensorName;
 }
 
-// ResourceEvent.1.3.0.ResourceStatusChanged{Warning,OK} for a detector
-// entering or leaving Unavailable. Message text follows the registry entry.
+// ResourceEvent.1.3.0.ResourceStatusChanged{OK,Warning,Critical} for a
+// detector entering or leaving Unavailable. health is the Redfish
+// Status.Health the detector now reports. Message text follows the registry
+// entry, which quotes the resource differently for OK.
 static void sendDetectorStatusChanged(const std::string& sensorName,
-                                      bool recovered)
+                                      const std::string& health)
 {
-    const std::string health = recovered ? "OK" : "Warning";
     nlohmann::json::object_t eventMessage;
-    eventMessage["MessageId"] = recovered
-                                    ? "ResourceEvent.1.3.0.ResourceStatusChangedOK"
-                                    : "ResourceEvent.1.3.0.ResourceStatusChangedWarning";
+    eventMessage["MessageId"] =
+        "ResourceEvent.1.3.0.ResourceStatusChanged" + health;
     eventMessage["MessageArgs"] =
         nlohmann::json::array_t{sensorName, health};
     eventMessage["Severity"] = health;
     eventMessage["MessageSeverity"] = health;
     eventMessage["Message"] =
-        recovered ? "The health of resource '" + sensorName +
-                        "' has changed to OK."
-                  : "The health of resource `" + sensorName +
-                        "` has changed to Warning.";
+        health == "OK"
+            ? "The health of resource '" + sensorName + "' has changed to OK."
+            : "The health of resource `" + sensorName + "` has changed to " +
+                  health + ".";
 
     nlohmann::json::object_t originObj;
     originObj["@odata.id"] = leakDetectorOriginUri(sensorName);
@@ -171,15 +172,24 @@ static void onLeakDetectorPropertiesChanged(sdbusplus::message_t& msg)
 
     if (state == "Unavailable")
     {
-        sendDetectorStatusChanged(sensorName, /*recovered=*/false);
+        sendDetectorStatusChanged(sensorName, "Warning");
         return;
     }
     if (previous == "Unavailable")
     {
-        // Readable again: report the health change, then the leak state
-        // it came back with (LeakDetectedNormal when not leaking) so a
-        // subscriber matching only on the leak messages learns it too.
-        sendDetectorStatusChanged(sensorName, /*recovered=*/true);
+        // Readable again: report the health it came back with, then the
+        // leak state (LeakDetectedNormal when not leaking) so a subscriber
+        // matching only on the leak messages learns it too. Unavailable is
+        // already reported as Warning, so returning to a Warning leak is
+        // not a health change.
+        if (state == "Critical")
+        {
+            sendDetectorStatusChanged(sensorName, "Critical");
+        }
+        else if (state == "OK")
+        {
+            sendDetectorStatusChanged(sensorName, "OK");
+        }
     }
 
     std::string messageId;
