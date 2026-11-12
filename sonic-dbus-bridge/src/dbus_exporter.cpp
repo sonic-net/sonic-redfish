@@ -291,7 +291,8 @@ bool DBusExporter::createLeakSensorObjects(
     return true;
 }
 
-bool DBusExporter::createLeakSensorObject(const LeakSensorInfo& sensor)
+bool DBusExporter::createLeakSensorObject(const LeakSensorInfo& sensor,
+                                          bool skipInitialSignals)
 {
     std::string objPath = LEAK_SENSOR_BASE_PATH + sensor.name;
 
@@ -312,7 +313,7 @@ bool DBusExporter::createLeakSensorObject(const LeakSensorInfo& sensor)
             [type = sensor.redfishDetectorType()](const auto&) {
                 return type;
             });
-        leakIface->initialize();
+        leakIface->initialize(skipInitialSignals);
         interfaces_[objPath + ":" + IFACE_LEAK_DETECTOR] = leakIface;
 
         // OperationalStatus interface — Functional reflects sensor
@@ -321,7 +322,7 @@ bool DBusExporter::createLeakSensorObject(const LeakSensorInfo& sensor)
                                                            IFACE_OPERATIONAL_STATUS);
         statusIface->register_property<bool>("Functional",
                                              sensor.functional());
-        statusIface->initialize();
+        statusIface->initialize(skipInitialSignals);
         interfaces_[objPath + ":" + IFACE_OPERATIONAL_STATUS] = statusIface;
 
         // Inventory.Item interface — presence in LIQUID_COOLING_INFO
@@ -345,7 +346,7 @@ bool DBusExporter::createLeakSensorObject(const LeakSensorInfo& sensor)
             [prettyName](const auto&) {
                 return prettyName;
             });
-        itemIface->initialize();
+        itemIface->initialize(skipInitialSignals);
         interfaces_[objPath + ":" + IFACE_INVENTORY_ITEM] = itemIface;
 
         LOG_INFO("Created leak sensor object at %s (state=%s, type=%s, location=%s)",
@@ -374,7 +375,10 @@ bool DBusExporter::addLeakSensorObject(const LeakSensorInfo& sensor)
         return true;
     }
 
-    if (!createLeakSensorObject(sensor))
+    // initialize() would emit PropertiesChanged for every property, which
+    // bmcweb's leak monitor turns into an event even for a sensor that is
+    // OK. Suppress it and announce the first state once, below.
+    if (!createLeakSensorObject(sensor, /*skipInitialSignals=*/true))
     {
         return false;
     }

@@ -162,9 +162,12 @@ class DBusExporter
     /**
      * @brief Create the D-Bus object for one leak sensor
      *
+     * @param skipInitialSignals Do not emit PropertiesChanged for the new
+     *        properties (used for sensors created after startup)
      * @return true on success
      */
-    bool createLeakSensorObject(const LeakSensorInfo& sensor);
+    bool createLeakSensorObject(const LeakSensorInfo& sensor,
+                                bool skipInitialSignals = false);
 };
 
 } // namespace sonic::dbus_bridge
