@@ -31,19 +31,22 @@ import redis
 import requests
 import urllib3
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from framework.utils import AUTH, BMCWEB_BASE  # noqa: E402
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 STATE_DB = 6
 HOST_STATE_KEY = "HOST_STATE|switch-host"
 
 BRIDGE_BINARY = "sonic-dbus-bridge"
-BRIDGE_CONFIG = "/workspace/tests/redfish-api/data/config.yaml"
-BRIDGE_LOG = "/var/log/redfish-test/bridge.log"
-BRIDGE_PLATFORM = "arm64-test-platform-r0"
+# Launches the bridge exactly as start_services.sh does and waits for its
+# D-Bus names; prints the pid.
+START_BRIDGE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "start_bridge.sh")
 STATE_HOST_BUS_NAME = "xyz.openbmc_project.State.Host"
 
-REDFISH_PROBE = "https://localhost:443/redfish/v1/Systems/system"
-REDFISH_AUTH = ("bmcweb", "bmcweb")
+REDFISH_PROBE = BMCWEB_BASE + "/redfish/v1/Systems/system"
 
 STOP_TIMEOUT = 10
 START_TIMEOUT = 60
@@ -108,14 +111,6 @@ def _signal(pid, sig):
         pass
 
 
-def _bus_name_owned(name):
-    res = subprocess.run(
-        ["dbus-send", "--system", "--dest=org.freedesktop.DBus", "--print-reply",
-         "/org/freedesktop/DBus", "org.freedesktop.DBus.ListNames"],
-        capture_output=True, text=True)
-    return res.returncode == 0 and name in res.stdout
-
-
 def _wait_until(predicate, timeout):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -127,7 +122,7 @@ def _wait_until(predicate, timeout):
 
 def _redfish_answers():
     try:
-        resp = requests.get(REDFISH_PROBE, auth=REDFISH_AUTH, verify=False, timeout=5)
+        resp = requests.get(REDFISH_PROBE, auth=AUTH, verify=False, timeout=5)
     except requests.RequestException:
         return False
     return resp.status_code == 200
@@ -148,17 +143,15 @@ def stop_bridge():
 
 
 def start_bridge():
-    env = dict(os.environ, PLATFORM=BRIDGE_PLATFORM)
-    log = open(BRIDGE_LOG, "ab")
-    proc = subprocess.Popen([BRIDGE_BINARY, "-c", BRIDGE_CONFIG], env=env,
-                            stdout=log, stderr=log, start_new_session=True)
-    if not _wait_until(lambda: _bus_name_owned(STATE_HOST_BUS_NAME), START_TIMEOUT):
-        raise RuntimeError(f"{STATE_HOST_BUS_NAME} not claimed within {START_TIMEOUT}s "
-                           f"(bridge pid {proc.pid}, log {BRIDGE_LOG})")
+    res = subprocess.run(["bash", START_BRIDGE], stdout=subprocess.PIPE,
+                         text=True, start_new_session=True)
+    if res.returncode != 0:
+        raise RuntimeError("sonic-dbus-bridge did not start")
+    pid = int(res.stdout.strip())
     if not _wait_until(_redfish_answers, START_TIMEOUT):
         raise RuntimeError(f"bmcweb did not answer {REDFISH_PROBE} within {START_TIMEOUT}s "
                            f"of the bridge restart")
-    return proc.pid
+    return pid
 
 
 def main(argv):
@@ -185,9 +178,4 @@ if __name__ == "__main__":
         sys.exit(main(sys.argv))
     except RuntimeError as exc:
         print(f"restart_bridge: {exc}", file=sys.stderr)
-        try:
-            with open(BRIDGE_LOG) as f:
-                print("".join(f.readlines()[-20:]), file=sys.stderr)
-        except OSError:
-            pass
         sys.exit(1)

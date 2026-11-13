@@ -17,7 +17,6 @@
 
 set -e
 
-BRIDGE_CONFIG="/workspace/tests/redfish-api/data/config.yaml"
 PLATFORM_JSON="/workspace/tests/redfish-api/data/platform.json"
 LOG_DIR="/var/log/redfish-test"
 
@@ -77,27 +76,7 @@ echo "  test data seeded"
 # sonic-dbus-bridge
 # -----------------
 echo "Starting sonic-dbus-bridge..."
-export PLATFORM="arm64-test-platform-r0"
-sonic-dbus-bridge -c "$BRIDGE_CONFIG" &> "$LOG_DIR/bridge.log" &
-BRIDGE_PID=$!
-
-# Wait for the bridge to register its D-Bus service
-for i in $(seq 1 60); do
-    if dbus-send --system --dest=org.freedesktop.DBus --print-reply \
-        /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null \
-        | grep -q "xyz.openbmc_project.Inventory"; then
-        break
-    fi
-    sleep 0.5
-done
-if ! dbus-send --system --dest=org.freedesktop.DBus --print-reply \
-    /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null \
-    | grep -q "xyz.openbmc_project.Inventory"; then
-    echo "FATAL: sonic-dbus-bridge may not be fully ready" >&2
-    echo "  bridge log tail:" >&2
-    tail -20 "$LOG_DIR/bridge.log" 2>/dev/null || true
-    exit 1
-fi
+BRIDGE_PID=$(bash /workspace/tests/redfish-api/framework/start_bridge.sh)
 echo "  sonic-dbus-bridge started (pid=$BRIDGE_PID)"
 
 # -------

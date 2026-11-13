@@ -31,12 +31,10 @@ import requests
 import urllib3
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from framework.utils import run_validators  # noqa: E402
+from framework.utils import AUTH, BMCWEB_BASE, run_validators  # noqa: E402
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BMCWEB_BASE = "https://localhost:443"
-AUTH = ("bmcweb", "bmcweb")
 REQUEST_TIMEOUT = 10
 POLL = 1.0
 
