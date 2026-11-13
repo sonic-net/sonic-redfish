@@ -120,7 +120,9 @@ def run_case(case, redfish, state_db, repo_root):
     subscription_location = None
     teardown = case.get("teardown")
     sub = case["subscribe"]
-    expect = case["expect_event"]
+    expect = case.get("expect_event")
+    assert expect or case.get("expect_no_event"), \
+        "event_flow case needs expect_event or expect_no_event"
 
     with EventListener() as listener:
         try:
@@ -139,20 +141,39 @@ def run_case(case, redfish, state_db, repo_root):
 
             run_trigger_steps(case["trigger"], repo_root, background_procs)
 
-            validators = expect["validators"]
-            timeout = expect.get("timeout_seconds", 15)
-            test_logger.info(f"[WAIT] up to {timeout}s for event matching: {json.dumps(validators)}")
-            event = listener.wait_for_event(
-                lambda e: event_matches(e, validators), timeout=timeout
-            )
-            if event is None:
-                test_logger.info(f"[WAIT] TIMEOUT: no matching event within {timeout}s")
-            else:
-                test_logger.info(f"[EVENT] matched: {json.dumps(event)}")
-            assert event is not None, (
-                f"no event matching validators arrived within {timeout}s. "
-                f"validators={validators}"
-            )
+            if expect:
+                validators = expect["validators"]
+                timeout = expect.get("timeout_seconds", 15)
+                test_logger.info(f"[WAIT] up to {timeout}s for event matching: {json.dumps(validators)}")
+                event = listener.wait_for_event(
+                    lambda e: event_matches(e, validators), timeout=timeout
+                )
+                if event is None:
+                    test_logger.info(f"[WAIT] TIMEOUT: no matching event within {timeout}s")
+                else:
+                    test_logger.info(f"[EVENT] matched: {json.dumps(event)}")
+                assert event is not None, (
+                    f"no event matching validators arrived within {timeout}s. "
+                    f"validators={validators}"
+                )
+
+            # Optional: events that must be delivered at most max_matches
+            # times (default 0) over the whole case, including any received
+            # before the expected one.
+            forbidden = case.get("expect_no_event")
+            if forbidden:
+                settle = forbidden.get("settle_seconds", 5)
+                max_matches = forbidden.get("max_matches", 0)
+                test_logger.info(f"[WAIT] {settle}s, at most {max_matches} events matching: "
+                                 f"{json.dumps(forbidden['validators'])}")
+                listener.drain(settle)
+                matched = [e for e in listener.received
+                           if event_matches(e, forbidden["validators"])]
+                assert len(matched) <= max_matches, (
+                    f"{forbidden.get('description', 'unexpected event')}: "
+                    f"{len(matched)} matching events (max {max_matches}): "
+                    f"{json.dumps(matched)}"
+                )
         finally:
             kill_background(background_procs)
             if subscription_location:

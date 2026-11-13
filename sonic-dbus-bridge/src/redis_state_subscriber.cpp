@@ -359,6 +359,13 @@ void RedisStateSubscriber::subscriberLoop()
 {
     LOG_INFO( "[RedisStateSubscriber] Subscriber loop started");
 
+    // Notifications published from here on are queued on subContext_, so
+    // anything this re-reads cannot be missed in between.
+    if (subscribedCallback_)
+    {
+        subscribedCallback_();
+    }
+
     while (running_)
     {
         redisReply* reply;

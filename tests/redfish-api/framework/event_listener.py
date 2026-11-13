@@ -48,6 +48,8 @@ class EventListener:
         bound_host, bound_port = self._server.server_address
         self.host = bound_host
         self.port = bound_port
+        # Every event taken off the queue, matched or not, in arrival order.
+        self.received = []
 
     @property
     def url(self) -> str:
@@ -75,8 +77,13 @@ class EventListener:
                 event = self._server.event_queue.get(timeout=remaining)
             except Empty:
                 return None
+            self.received.append(event)
             if predicate(event):
                 return event
+
+    def drain(self, seconds: float):
+        """Collect everything that arrives within `seconds` into `received`."""
+        self.wait_for_event(lambda _e: False, timeout=seconds)
 
     def __enter__(self):
         return self.start()

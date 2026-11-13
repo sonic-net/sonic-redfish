@@ -68,8 +68,8 @@ StateManager::StateManager(sdbusplus::asio::object_server& server,
                            boost::asio::io_context& io,
                            std::shared_ptr<RedisAdapter> redisAdapter)
     : server_(server), io_(io), redisAdapter_(std::move(redisAdapter)),
-      currentHostState_(host_state::HOST_STATE_RUNNING),
-      currentChassisPowerState_(host_state::CHASSIS_POWER_STATE_ON),
+      currentHostState_(host_state::HOST_STATE_UNKNOWN),
+      currentChassisPowerState_(host_state::CHASSIS_POWER_STATE_UNKNOWN),
       redisPublisher_(std::make_unique<RedisStatePublisher>()),
       actionTimer_(std::make_unique<boost::asio::steady_timer>(io)),
       commandTimer_(std::make_unique<boost::asio::steady_timer>(io))
@@ -94,29 +94,35 @@ void StateManager::initializeFromDb()
         info = redisAdapter_->getHostState();
     }
 
+    // Never guess: until bmcctld has published a recognisable row the host
+    // state is reported as unknown (PowerState omitted on the Redfish side).
+    // The first HOST_STATE|switch-host notification replaces it and emits
+    // the matching host power event.
+    std::string_view seeded = host_state::initialHostState(
+        info.has_value(), info ? info->devicePowerState : std::string(),
+        info ? info->deviceStatus : std::string());
+
+    currentHostState_ = std::string(seeded);
+    currentChassisPowerState_ =
+        std::string(host_state::hostStateToChassisPowerState(seeded));
+
     if (!info)
     {
-        LOG_WARNING("StateManager: %s not present in STATE_DB, "
-                    "assuming Switch-Host is %s until bmcctld reports",
-                    host_state::KEY_HOST_STATE.data(), currentHostState_.c_str());
+        LOG_WARNING("StateManager: %s not present in STATE_DB, reporting "
+                    "the Switch-Host state as unknown until bmcctld publishes it",
+                    host_state::KEY_HOST_STATE.data());
         return;
     }
 
-    auto mapped = host_state::mapHostState(info->devicePowerState,
-                                           info->deviceStatus);
-    if (!mapped)
+    if (host_state::isUnknownHostState(seeded))
     {
         LOG_WARNING("StateManager: unrecognised %s (device_power_state=%s, "
-                    "device_status=%s), keeping %s",
+                    "device_status=%s), reporting the Switch-Host state as "
+                    "unknown until bmcctld publishes a recognised value",
                     host_state::KEY_HOST_STATE.data(),
-                    info->devicePowerState.c_str(), info->deviceStatus.c_str(),
-                    currentHostState_.c_str());
+                    info->devicePowerState.c_str(), info->deviceStatus.c_str());
         return;
     }
-
-    currentHostState_ = std::string(*mapped);
-    currentChassisPowerState_ =
-        std::string(host_state::hostStateToChassisPowerState(*mapped));
 
     LOG_NOTICE("Switch-Host initial state: device_power_state=%s "
                "device_status=%s -> %s",
