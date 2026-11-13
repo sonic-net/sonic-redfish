@@ -191,31 +191,7 @@ void UpdateEngine::onRedisFieldChange(const std::string& key,
         // Handle HOST_STATE|switch-host changes (bmcctld -> State.Host)
         else if (key == host_state::KEY_HOST_STATE)
         {
-            // The subscriber fans out one callback per hash field, so the
-            // whole hash is re-read once per notification.
-            if (field != host_state::FIELD_DEVICE_POWER_STATE)
-            {
-                return;
-            }
-
-            auto hostState = redisAdapter_->getHostState();
-            if (!hostState)
-            {
-                LOG_WARNING("[UpdateEngine] %s not found in Redis", key.c_str());
-                return;
-            }
-
-            if (!stateManager_)
-            {
-                LOG_WARNING("[UpdateEngine] %s changed but no StateManager attached",
-                            key.c_str());
-                return;
-            }
-
-            LOG_INFO("[UpdateEngine] %s changed: device_power_state=%s device_status=%s",
-                     key.c_str(), hostState->devicePowerState.c_str(),
-                     hostState->deviceStatus.c_str());
-            stateManager_->onHostStateChanged(*hostState);
+            syncHostState();
             return;
         }
         // Handle RACK_MANAGER_COMMAND|<id> changes (bmcctld command results)
@@ -306,6 +282,41 @@ void UpdateEngine::onRedisFieldChange(const std::string& key,
     {
         LOG_ERROR("[UpdateEngine] Error handling Redis field change: %s", e.what());
     }
+}
+
+void UpdateEngine::syncHostState()
+{
+    const char* key = host_state::KEY_HOST_STATE.data();
+
+    auto hostState = redisAdapter_->getHostState();
+    if (!hostState)
+    {
+        LOG_DEBUG("[UpdateEngine] %s not found in Redis", key);
+        return;
+    }
+
+    // The subscriber fans out one callback per hash field, so the same row
+    // arrives several times per notification: forward it once. Any field
+    // triggers the read, so a row without device_power_state is not ignored.
+    if (lastHostState_ &&
+        lastHostState_->devicePowerState == hostState->devicePowerState &&
+        lastHostState_->deviceStatus == hostState->deviceStatus &&
+        lastHostState_->lastChangeTimestamp == hostState->lastChangeTimestamp)
+    {
+        return;
+    }
+
+    if (!stateManager_)
+    {
+        LOG_WARNING("[UpdateEngine] %s changed but no StateManager attached", key);
+        return;
+    }
+
+    lastHostState_ = hostState;
+    LOG_INFO("[UpdateEngine] %s: device_power_state=%s device_status=%s", key,
+             hostState->devicePowerState.c_str(),
+             hostState->deviceStatus.c_str());
+    stateManager_->onHostStateChanged(*hostState);
 }
 
 void UpdateEngine::syncLeakSensors()

@@ -495,8 +495,11 @@ void BridgeApp::startUpdateEngine()
         updateEngine_->onRedisFieldChange(key, field, value);
     };
 
-    // Close the window between the startup read and the subscription.
+    // Close the window between the startup read and the subscription. The
+    // host state matters as much as the leak sensors: bmcctld writes its row
+    // once, so a write lost here would leave the state unknown.
     redisSubscriber_->setSubscribedCallback([this]() {
+        updateEngine_->syncHostState();
         updateEngine_->syncLeakSensors();
     });
 

@@ -101,6 +101,15 @@ class UpdateEngine
      */
     void syncLeakSensors();
 
+    /**
+     * @brief Re-read HOST_STATE|switch-host and apply it
+     *
+     * Run on the subscriber thread once the subscriptions are active, so a
+     * row bmcctld wrote between the startup read and the subscription is
+     * not lost. Also handles every later notification for the row.
+     */
+    void syncHostState();
+
   private:
     boost::asio::io_context& io_;
     std::shared_ptr<RedisAdapter> redisAdapter_;
@@ -115,6 +124,8 @@ class UpdateEngine
     std::optional<DeviceMetadata> cachedMetadata_;
     std::optional<ChassisState> cachedState_;
     std::map<std::string, std::string> cachedLeakStates_;
+    // Last HOST_STATE|switch-host row forwarded. Subscriber thread only.
+    std::optional<HostStateInfo> lastHostState_;
 
     /**
      * @brief Poll timer handler

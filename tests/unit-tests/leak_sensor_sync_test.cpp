@@ -47,12 +47,23 @@ TEST(TrackedLeakState, CombinesDetectorStateAndHealth)
               "Unavailable|Fault");
 }
 
+// A faulted sensor cannot vouch for "not leaking": it is Unavailable, so
+// the fault reaches DetectorState and the monitor reports it. A leak the
+// sensor still reports is kept.
+TEST(DetectorState, FaultedSensorNotLeakingIsUnavailable)
+{
+    EXPECT_EQ(makeSensor("No", "None", "Fault").detectorState(), "Unavailable");
+    EXPECT_EQ(makeSensor("No").detectorState(), "OK");
+    EXPECT_EQ(makeSensor("Yes", "CRITICAL", "Fault").detectorState(), "Critical");
+    EXPECT_EQ(makeSensor("Yes", "MINOR", "Fault").detectorState(), "Warning");
+}
+
 // A fault reported alongside an unchanged DetectorState must still count as
 // a change, otherwise Functional would never be updated on D-Bus.
 TEST(TrackedLeakState, FaultAloneIsAChange)
 {
-    EXPECT_NE(trackedLeakState(makeSensor("No")),
-              trackedLeakState(makeSensor("No", "None", "Fault")));
+    EXPECT_NE(trackedLeakState(makeSensor("Yes", "CRITICAL")),
+              trackedLeakState(makeSensor("Yes", "CRITICAL", "Fault")));
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +99,8 @@ TEST(DecideLeakSensorAction, ChangedStateUpdates)
 {
     EXPECT_EQ(decideLeakSensorAction(true, std::string("OK"), "Critical"),
               LeakSensorAction::Update);
-    EXPECT_EQ(decideLeakSensorAction(true, std::string("OK"), "OK|Fault"),
+    EXPECT_EQ(decideLeakSensorAction(true, std::string("OK"),
+                                     "Unavailable|Fault"),
               LeakSensorAction::Update);
 }
 
@@ -112,6 +124,7 @@ TEST(AnnounceInitialLeakState, OnlyNonOkStatesAreAnnounced)
     EXPECT_TRUE(announceInitialLeakState(makeSensor("Yes", "MINOR")));
     EXPECT_TRUE(announceInitialLeakState(makeSensor("Yes", "CRITICAL")));
     EXPECT_TRUE(announceInitialLeakState(makeSensor("N/A", "None", "Fault")));
+    EXPECT_TRUE(announceInitialLeakState(makeSensor("No", "None", "Fault")));
 }
 
 } // namespace sonic::dbus_bridge::test

@@ -296,6 +296,9 @@ bool DBusExporter::createLeakSensorObject(const LeakSensorInfo& sensor,
 {
     std::string objPath = LEAK_SENSOR_BASE_PATH + sensor.name;
 
+    // Interfaces added so far, so a failure part way can take them back.
+    std::vector<std::shared_ptr<sdbusplus::asio::dbus_interface>> added;
+
     try
     {
         // Map the derived detector state to a fully-qualified D-Bus enum
@@ -306,6 +309,7 @@ bool DBusExporter::createLeakSensorObject(const LeakSensorInfo& sensor,
         // emits PropertiesChanged signals for bmcweb event monitoring.
         auto leakIface = inventoryServer_.add_interface(objPath,
                                                          IFACE_LEAK_DETECTOR);
+        added.push_back(leakIface);
         leakIface->register_property<std::string>("DetectorState", stateEnum);
         leakIface->register_property_r<std::string>(
             "Type", std::string(""),
@@ -320,6 +324,7 @@ bool DBusExporter::createLeakSensorObject(const LeakSensorInfo& sensor,
         // hardware health (leak_sensor_status), not leak state.
         auto statusIface = inventoryServer_.add_interface(objPath,
                                                            IFACE_OPERATIONAL_STATUS);
+        added.push_back(statusIface);
         statusIface->register_property<bool>("Functional",
                                              sensor.functional());
         statusIface->initialize(skipInitialSignals);
@@ -329,6 +334,7 @@ bool DBusExporter::createLeakSensorObject(const LeakSensorInfo& sensor,
         // means the sensor exists on this platform.
         auto itemIface = inventoryServer_.add_interface(objPath,
                                                          IFACE_INVENTORY_ITEM);
+        added.push_back(itemIface);
         itemIface->register_property_r<bool>(
             "Present", true,
             sdbusplus::vtable::property_::const_,
@@ -358,6 +364,19 @@ bool DBusExporter::createLeakSensorObject(const LeakSensorInfo& sensor,
     {
         LOG_ERROR("Failed to create leak sensor object at %s: %s",
                   objPath.c_str(), e.what());
+
+        // Leave nothing behind: a half-built object would make
+        // hasLeakSensor() true and the sensor would never be created or
+        // registered on a later notification.
+        for (const char* iface : {IFACE_LEAK_DETECTOR, IFACE_OPERATIONAL_STATUS,
+                                  IFACE_INVENTORY_ITEM})
+        {
+            interfaces_.erase(objPath + ":" + iface);
+        }
+        for (auto& iface : added)
+        {
+            inventoryServer_.remove_interface(iface);
+        }
         return false;
     }
 }
@@ -382,8 +401,6 @@ bool DBusExporter::addLeakSensorObject(const LeakSensorInfo& sensor)
     {
         return false;
     }
-
-    currentModel_.leakSensors.push_back(sensor);
 
     std::string objPath = LEAK_SENSOR_BASE_PATH + sensor.name;
     if (objectRegistrar_)
