@@ -98,10 +98,11 @@ inline resource::Health detectorStateToHealth(const std::string& state)
 // reports the sensor faulted or its leak state is N/A) or whose hardware is
 // not functional must not look healthy to the Rack Manager: it is reported
 // UnavailableOffline with at least Warning health. A leak that is still
-// known keeps its own, higher, health.
+// known keeps its own, higher, health. A detector with no DetectorState at
+// all is treated the same way rather than assumed healthy.
 inline bool leakDetectorUnavailable(const std::string& state, bool functional)
 {
-    return state == "Unavailable" || !functional;
+    return state.empty() || state == "Unavailable" || !functional;
 }
 
 inline void setLeakDetectorStatus(nlohmann::json& json, const std::string& state,

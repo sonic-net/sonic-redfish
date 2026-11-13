@@ -685,8 +685,8 @@ which is what `GET /redfish/v1/Systems/system` reports as `PowerState`:
 | `POWER_CYCLE`             | `ONLINE`        | `Running`                 | `On`                 |
 | any stable state          | conflicting     | follows `device_status`   |                      |
 | unrecognised              | `ONLINE`/`OFFLINE` | `Running`/`Off`        |                      |
-| unrecognised              | unrecognised    | unchanged                 |                      |
-| row absent at startup     | -               | `Unknown`                 | omitted, `Status.State` `UnavailableOffline` |
+| unrecognised              | unrecognised    | unchanged (runtime update) |                     |
+| row absent, or both fields unrecognised, at startup | - | `Unknown`    | omitted, `Status.State` `UnavailableOffline` |
 
 Until `sonic-bmcctld` has published `HOST_STATE|switch-host` the bridge
 reports the dedicated `Unknown` value rather than guessing, and
@@ -709,18 +709,21 @@ Each `CurrentHostState` change is also delivered to Redfish event
 subscribers (`POST /redfish/v1/EventService/Subscriptions`) as a
 `ResourceEvent` message (`ResourcePoweringOn`, `ResourcePoweredOn`,
 `ResourcePoweringOff`, `ResourcePoweredOff`) with `OriginOfCondition`
-`/redfish/v1/Systems/system`. Subscriptions may filter on
-`RegistryPrefixes: ["ResourceEvent"]` or `ResourceTypes: ["ComputerSystem"]`.
+`/redfish/v1/Systems/system`, resource type `ComputerSystem`.
 
-Leak detectors send `Environmental.1.1.0.LeakDetected{Critical,Warning,Normal}`
-and, when a sensor faults or recovers, `ResourceEvent.1.3.0.ResourceStatusChanged{Warning,OK,Critical}`,
-all with resource type `LeakDetector`. A subscription filtered on
-`RegistryPrefixes` needs both `Environmental` and `ResourceEvent` to receive
-all of them. bmcweb accepts `MessageIds` and `OriginResources` filters, but
-no SONiC event matches them (bmcweb compares `MessageIds` against
-`<Registry>.<Key>` while accepting bare keys, and expects `OriginOfCondition`
-as a string where these events send an object), so subscribe without them
-and match on `MessageId`.
+Leak detectors send `Environmental.1.1.LeakDetected{Critical,Warning,Normal}`
+and, when a sensor faults or recovers, `ResourceEvent.1.3.ResourceStatusChanged{Warning,OK,Critical}`,
+all with resource type `LeakDetector`.
+
+A `MessageId` has the Redfish form `<Registry>.<Major>.<Minor>.<Key>`, for
+example `ResourceEvent.1.3.ResourcePoweredOn`. A subscription can be
+unfiltered, or filtered on `RegistryPrefixes` (`Environmental`,
+`ResourceEvent`) or `ResourceTypes` (`ComputerSystem`, `LeakDetector`).
+bmcweb also accepts `MessageIds` and `OriginResources` filters, but no SONiC
+event matches them (it compares `MessageIds` against `<Registry>.<Key>`
+while accepting only bare keys, and expects `OriginOfCondition` as a string
+where these events send an object), so subscribe without them and match on
+`MessageId`.
 
 The state and `ResetType` mapping tables live in
 `sonic-dbus-bridge/include/host_state_mapping.hpp` and are covered by

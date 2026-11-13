@@ -53,25 +53,25 @@ static bool mapHostStateToEvent(const std::string& stateEnum,
 
     if (state == "Running")
     {
-        messageId = "ResourceEvent.1.3.0.ResourcePoweredOn";
+        messageId = "ResourceEvent.1.3.ResourcePoweredOn";
         message = "The resource `" + resourceName + "` has powered on.";
         return true;
     }
     if (state == "Off")
     {
-        messageId = "ResourceEvent.1.3.0.ResourcePoweredOff";
+        messageId = "ResourceEvent.1.3.ResourcePoweredOff";
         message = "The resource `" + resourceName + "` has powered off.";
         return true;
     }
     if (state == "TransitioningToRunning")
     {
-        messageId = "ResourceEvent.1.3.0.ResourcePoweringOn";
+        messageId = "ResourceEvent.1.3.ResourcePoweringOn";
         message = "The resource `" + resourceName + "` is powering on.";
         return true;
     }
     if (state == "TransitioningToOff")
     {
-        messageId = "ResourceEvent.1.3.0.ResourcePoweringOff";
+        messageId = "ResourceEvent.1.3.ResourcePoweringOff";
         message = "The resource `" + resourceName + "` is powering off.";
         return true;
     }

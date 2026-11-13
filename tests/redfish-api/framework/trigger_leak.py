@@ -12,7 +12,7 @@
 """Inject a leak-sensor state change into STATE_DB (db 6).
 
 Usage:
-    trigger_leak.py <sensor_name> <state>      # state: OK | Warning | Critical | Unavailable
+    trigger_leak.py <sensor_name> <state>      # state: OK | Warning | Critical | Unavailable | FaultNotLeaking
 
 Writes the LIQUID_COOLING_INFO|<name> fields the way thermalctld does.
 The sonic-dbus-bridge derives the D-Bus DetectorState from
@@ -33,6 +33,9 @@ STATE_TO_FIELDS = {
     "Warning": {"leaking": "Yes", "leak_severity": "MINOR", "leak_sensor_status": "Good"},
     "Critical": {"leaking": "Yes", "leak_severity": "CRITICAL", "leak_sensor_status": "Good"},
     "Unavailable": {"leaking": "N/A", "leak_severity": "None", "leak_sensor_status": "Fault"},
+    # Not written by thermalctld (a fault comes with leaking N/A); the bridge
+    # must still not report such a sensor as healthy.
+    "FaultNotLeaking": {"leaking": "No", "leak_severity": "None", "leak_sensor_status": "Fault"},
 }
 
 

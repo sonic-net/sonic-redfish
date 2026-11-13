@@ -59,7 +59,7 @@ static std::string leakDetectorOriginUri(const std::string& sensorName)
            sensorName;
 }
 
-// ResourceEvent.1.3.0.ResourceStatusChanged{OK,Warning,Critical} for a
+// ResourceEvent.1.3.ResourceStatusChanged{OK,Warning,Critical} for a
 // detector entering or leaving Unavailable. health is the Redfish
 // Status.Health the detector now reports. Message text follows the registry
 // entry, which quotes the resource differently for OK.
@@ -68,7 +68,7 @@ static void sendDetectorStatusChanged(const std::string& sensorName,
 {
     nlohmann::json::object_t eventMessage;
     eventMessage["MessageId"] =
-        "ResourceEvent.1.3.0.ResourceStatusChanged" + health;
+        "ResourceEvent.1.3.ResourceStatusChanged" + health;
     eventMessage["MessageArgs"] =
         nlohmann::json::array_t{sensorName, health};
     eventMessage["Severity"] = health;
@@ -103,7 +103,7 @@ static bool mapDetectorStateToEvent(const std::string& stateEnum,
 
     if (state == "Critical")
     {
-        messageId = "Environmental.1.1.0.LeakDetectedCritical";
+        messageId = "Environmental.1.1.LeakDetectedCritical";
         severity = "Critical";
         message = "Leak detector '" + sensorName +
                   "' reports a critical level leak.";
@@ -111,7 +111,7 @@ static bool mapDetectorStateToEvent(const std::string& stateEnum,
     }
     if (state == "Warning")
     {
-        messageId = "Environmental.1.1.0.LeakDetectedWarning";
+        messageId = "Environmental.1.1.LeakDetectedWarning";
         severity = "Warning";
         message = "Leak detector '" + sensorName +
                   "' reports a warning level leak.";
@@ -119,7 +119,7 @@ static bool mapDetectorStateToEvent(const std::string& stateEnum,
     }
     if (state == "OK")
     {
-        messageId = "Environmental.1.1.0.LeakDetectedNormal";
+        messageId = "Environmental.1.1.LeakDetectedNormal";
         severity = "OK";
         message = "Leak detector '" + sensorName + "' has returned to normal.";
         return true;
