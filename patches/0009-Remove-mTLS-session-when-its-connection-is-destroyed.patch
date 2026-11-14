@@ -1,0 +1,268 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chinmoy Dey <chinmoy@nexthop.ai>
+Date: Sat, 14 Nov 2026 00:00:00 +0000
+Subject: [PATCH 9/9] Remove mTLS session when its connection is destroyed
+
+bmcweb creates one MutualTLS UserSession in the session store for every
+TLS handshake that presents a valid client certificate
+(tlsVerifyCallback -> verifyMtlsUser -> generateUserSession). The session
+was removed again only in Connection::gracefulClose(), i.e. when the
+server decides to close the connection. Every other teardown path left
+the session in SessionStore::authTokens:
+  - the client closes the connection first (EOF on read -> hardClose())
+  - read/write errors and the connection deadline timer (hardClose())
+  - every HTTP/2 connection: HTTP2Connection holds the session but never
+    removes it
+
+The idle timeout did not bound the growth either, because
+applySessionTimeouts() only runs from token/cookie logins and from
+SessionService reads, which a certificate-only client never triggers.
+A client that opens one mTLS connection per request therefore grows the
+session table, and bmcweb RSS, by one entry per request for as long as
+the process runs (sonic-net/sonic-redfish#44).
+
+  - http_connection.hpp: add removeMtlsSession() and call it from
+    ~Connection() so the session lifetime follows the connection object
+    on every close path; gracefulClose() uses the same helper
+  - http_connection.hpp: upgradeToHttp2() releases the HTTP/1 object's
+    reference after handing the session to the HTTP/2 connection, so the
+    HTTP/1 destructor does not remove a session that is still in use
+  - http2_connection.hpp: add ~HTTP2Connection() that removes the session
+  - sessions.hpp: run applySessionTimeouts() in generateUserSession() so
+    the store stays bounded by SessionTimeout even if no token login or
+    SessionService read ever happens
+
+The same clients exposed a second retention path: HTTP/1 connections
+are bounded by Connection's 15 second deadline timer, but an HTTP/2
+connection had no timer at all and bmcweb sets no TCP keepalive. A peer
+that goes silent, or disappears without closing the socket, held the
+connection, its file descriptor and its mTLS session until bmcweb
+restarted.
+
+  - http2_connection.hpp: add an idle timer. It is re-armed on every
+    completed read and write and closes the connection after 60 seconds
+    without traffic. While a request stream is still open the timer is
+    re-armed instead, so a slow handler is not cut off
+
+Signed-off-by: Chinmoy Dey <chinmoy@nexthop.ai>
+---
+ http/http2_connection.hpp | 73 +++++++++++++++++++++++++++++++++++++++++++++++
+ http/http_connection.hpp  | 30 ++++++++++++++-----
+ include/sessions.hpp      |  5 ++++
+ 3 files changed, 101 insertions(+), 7 deletions(-)
+
+diff --git a/http/http2_connection.hpp b/http/http2_connection.hpp
+index 65265e17..39adfae7 100644
+--- a/http/http2_connection.hpp
++++ b/http/http2_connection.hpp
+@@ -21,7 +21,9 @@
+ #include <unistd.h>
+ 
+ #include <boost/asio/buffer.hpp>
++#include <boost/asio/error.hpp>
+ #include <boost/asio/ssl/stream.hpp>
++#include <boost/asio/steady_timer.hpp>
+ #include <boost/beast/core/error.hpp>
+ #include <boost/beast/http/field.hpp>
+ #include <boost/beast/http/fields.hpp>
+@@ -33,6 +35,7 @@
+ 
+ #include <array>
+ #include <bit>
++#include <chrono>
+ #include <cstddef>
+ #include <cstdint>
+ #include <functional>
+@@ -71,10 +74,29 @@ class HTTP2Connection :
+         std::function<std::string()>& getCachedDateStrF, HttpType httpTypeIn,
+         const std::shared_ptr<persistent_data::UserSession>& mtlsSessionIn) :
+         httpType(httpTypeIn), adaptor(std::move(adaptorIn)),
++        idleTimer(adaptor.get_executor()),
+         ngSession(initializeNghttp2Session()), handler(handlerIn),
+         getCachedDateStr(getCachedDateStrF), mtlsSession(mtlsSessionIn)
+     {}
+ 
++    ~HTTP2Connection()
++    {
++        // The mTLS session was handed over by the HTTP/1 connection on
++        // upgrade and lives exactly as long as this connection.
++        if (mtlsSession != nullptr)
++        {
++            BMCWEB_LOG_DEBUG("{} Removing TLS session: {}", logPtr(this),
++                             mtlsSession->uniqueId);
++            persistent_data::SessionStore::getInstance().removeSession(
++                mtlsSession);
++        }
++    }
++
++    HTTP2Connection(const HTTP2Connection&) = delete;
++    HTTP2Connection(HTTP2Connection&&) = delete;
++    HTTP2Connection& operator=(const HTTP2Connection&) = delete;
++    HTTP2Connection& operator=(HTTP2Connection&&) = delete;
++
+     void start()
+     {
+         // Create the control stream
+@@ -586,6 +608,7 @@ class HTTP2Connection :
+             self->close();
+             return;
+         }
++        self->restartIdleTimer();
+         self->writeBuffer();
+     }
+ 
+@@ -618,9 +641,57 @@ class HTTP2Connection :
+ 
+     void close()
+     {
++        idleTimer.cancel();
+         adaptor.next_layer().close();
+     }
+ 
++    // HTTP/1 connections are bounded by Connection's deadline timer.  An
++    // HTTP/2 connection had no equivalent, so a peer that goes silent or
++    // disappears without closing the socket held the connection, its file
++    // descriptor and its mTLS session until the process restarted.  Close
++    // the connection once no bytes have moved in either direction for
++    // idleTimeout and no request is in flight.
++    static constexpr std::chrono::seconds idleTimeout{60};
++
++    void restartIdleTimer()
++    {
++        // expires_after() cancels a wait that is already pending
++        idleTimer.expires_after(idleTimeout);
++        idleTimer.async_wait(
++            std::bind_front(&self_type::afterIdleTimer, weak_from_this()));
++    }
++
++    static void afterIdleTimer(const std::weak_ptr<self_type>& weakSelf,
++                               const boost::system::error_code& ec)
++    {
++        if (ec == boost::asio::error::operation_aborted)
++        {
++            // Timer was restarted or the connection was closed
++            return;
++        }
++        std::shared_ptr<self_type> self = weakSelf.lock();
++        if (self == nullptr)
++        {
++            return;
++        }
++        if (ec)
++        {
++            BMCWEB_LOG_CRITICAL("{} idle timer failed {}", logPtr(self.get()),
++                                ec);
++        }
++        // streams always holds the control stream (id 0).  Anything beyond
++        // that is a request still being handled; give it another period
++        // rather than cutting off a slow handler.
++        if (!ec && self->streams.size() > 1)
++        {
++            self->restartIdleTimer();
++            return;
++        }
++        BMCWEB_LOG_DEBUG("{} HTTP/2 connection idle, closing",
++                         logPtr(self.get()));
++        self->close();
++    }
++
+     void afterDoRead(const std::shared_ptr<self_type>& /*self*/,
+                      const boost::system::error_code& ec,
+                      size_t bytesTransferred)
+@@ -658,6 +729,7 @@ class HTTP2Connection :
+     void doRead()
+     {
+         BMCWEB_LOG_DEBUG("{} doRead", logPtr(this));
++        restartIdleTimer();
+         if (httpType == HttpType::HTTPS)
+         {
+             adaptor.async_read_some(boost::asio::buffer(inBuffer),
+@@ -680,6 +752,7 @@ class HTTP2Connection :
+ 
+     HttpType httpType = HttpType::BOTH;
+     boost::asio::ssl::stream<Adaptor> adaptor;
++    boost::asio::steady_timer idleTimer;
+     bool isWriting = false;
+ 
+     nghttp2_session ngSession;
+diff --git a/http/http_connection.hpp b/http/http_connection.hpp
+index 8e68bf5b..902b8158 100644
+--- a/http/http_connection.hpp
++++ b/http/http_connection.hpp
+@@ -96,6 +96,12 @@ class Connection :
+         res.releaseCompleteRequestHandler();
+         cancelDeadlineTimer();
+ 
++        // The mTLS session belongs to this connection.  Drop it from the
++        // session store on every teardown path (client EOF, read/write
++        // error, deadline timeout), not only on a server initiated
++        // gracefulClose().
++        removeMtlsSession();
++
+         connectionCount--;
+         BMCWEB_LOG_DEBUG("{} Connection closed, total {}", logPtr(this),
+                          connectionCount);
+@@ -106,6 +112,18 @@ class Connection :
+     Connection& operator=(const Connection&) = delete;
+     Connection& operator=(Connection&&) = delete;
+ 
++    void removeMtlsSession()
++    {
++        if (mtlsSession == nullptr)
++        {
++            return;
++        }
++        BMCWEB_LOG_DEBUG("{} Removing TLS session: {}", logPtr(this),
++                         mtlsSession->uniqueId);
++        persistent_data::SessionStore::getInstance().removeSession(mtlsSession);
++        mtlsSession = nullptr;
++    }
++
+     bool tlsVerifyCallback(bool preverified,
+                            boost::asio::ssl::verify_context& ctx)
+     {
+@@ -287,6 +305,10 @@ class Connection :
+         auto http2 = std::make_shared<HTTP2Connection<Adaptor, Handler>>(
+             std::move(adaptor), handler, getCachedDateStr, httpType,
+             mtlsSession);
++        // The HTTP/2 connection owns the mTLS session from here on and
++        // removes it when it is destroyed.  Release our reference so that
++        // ~Connection() does not remove a session that is still in use.
++        mtlsSession = nullptr;
+         if (http2settings.empty())
+         {
+             http2->start();
+@@ -472,13 +494,7 @@ class Connection :
+ 
+         if (httpType == HttpType::HTTPS)
+         {
+-            if (mtlsSession != nullptr)
+-            {
+-                BMCWEB_LOG_DEBUG("{} Removing TLS session: {}", logPtr(this),
+-                                 mtlsSession->uniqueId);
+-                persistent_data::SessionStore::getInstance().removeSession(
+-                    mtlsSession);
+-            }
++            removeMtlsSession();
+ 
+             adaptor.async_shutdown(std::bind_front(
+                 &self_type::tlsShutdownComplete, this, shared_from_this()));
+diff --git a/include/sessions.hpp b/include/sessions.hpp
+index 2c9613a2..257a8ea2 100644
+--- a/include/sessions.hpp
++++ b/include/sessions.hpp
+@@ -266,6 +266,11 @@ class SessionStore
+         const std::optional<std::string>& clientId, SessionType sessionType,
+         bool isConfigureSelfOnly = false)
+     {
++        // Expire stale sessions on creation as well, so that the store is
++        // bounded even when no caller ever logs in by token or reads
++        // SessionService (e.g. certificate-only clients).
++        applySessionTimeouts();
++
+         // Only need csrf tokens for cookie based auth, token doesn't matter
+         std::string sessionToken =
+             bmcweb::getRandomIdOfLength(sessionTokenSize);
+-- 
+2.43.0
+
