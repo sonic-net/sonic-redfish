@@ -215,6 +215,18 @@ Current patches:
    over D-Bus; falls back to `SONiCBMC` when unavailable)
 3. `0003-pin-sdbusplus-to-known-good-revision.patch` - Pins the sdbusplus wrap
 4. `0004-Integrate-SONiC-OEM-extension.patch` - Wires in the OEM extension (section 9)
+5. `0005-Integrate-rmc-events-leak-detection-into-bmcweb.patch` - Builds the
+   rmc-events leak detector monitor into bmcweb and serves the LeakDetection
+   resources and events
+6. `0006-Add-libcap-dependency-for-static-libsystemd.patch` - Links libcap, which
+   the static libsystemd needs
+7. `0007-Advertise-canonical-Chassis-LeakDetectors-collection.patch` - Links the
+   Chassis-level `LeakDetectors` collection from the Chassis resource
+8. `0008-Switch-Host-power-events-and-supported-ResetTypes.patch` - Sends host
+   power events and restricts `ComputerSystem.Reset` to the supported ResetTypes
+9. `0009-Remove-mTLS-session-when-its-connection-is-destroyed.patch` - Removes a
+   MutualTLS session together with its connection and closes idle HTTP/1
+   keep-alive and HTTP/2 connections
 
 To add a new patch:
 1. Make changes in bmcweb source directory.
