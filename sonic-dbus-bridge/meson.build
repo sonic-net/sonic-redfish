@@ -77,6 +77,7 @@ sources = files(
     'src/redis_adapter.cpp',
     'src/redis_state_publisher.cpp',
     'src/redis_state_subscriber.cpp',
+    'src/config_key_watcher.cpp',
     'src/platform_json_adapter.cpp',
     'src/fru_adapter.cpp',
     'src/inventory_model.cpp',

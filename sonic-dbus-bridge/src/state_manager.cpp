@@ -334,6 +334,12 @@ bool StateManager::executeHostTransition(const std::string& transition)
             {
                 return;
             }
+            if (ec)
+            {
+                LOG_WARNING("Command timer for %s failed: %s; treating it as "
+                            "a timeout", commandId.c_str(),
+                            ec.message().c_str());
+            }
             onCommandTimeout(commandId);
         });
 
@@ -411,6 +417,8 @@ void StateManager::onCommandTimeout(const std::string& commandId)
 {
     if (commandId != pendingCommandId_)
     {
+        LOG_DEBUG("Ignoring timeout of %s: it is no longer the pending "
+                  "command", commandId.c_str());
         return;
     }
 
@@ -424,6 +432,8 @@ void StateManager::onCommandTimeout(const std::string& commandId)
 
 void StateManager::completePendingCommand()
 {
+    LOG_DEBUG("Action slot released (command %s)",
+              pendingCommandId_.empty() ? "none" : pendingCommandId_.c_str());
     commandTimer_->cancel();
     pendingCommandId_.clear();
     pendingCommand_.clear();
@@ -448,15 +458,28 @@ void StateManager::updateHostState(const std::string& newState)
     {
         hostStateIface_->signal_property("CurrentHostState");
     }
+    else
+    {
+        LOG_WARNING("No State.Host interface; CurrentHostState change not "
+                    "announced");
+    }
 
     std::string chassisPowerState(
         host_state::hostStateToChassisPowerState(newState));
     if (chassisPowerState != currentChassisPowerState_)
     {
+        LOG_NOTICE("Chassis power state change: %s -> %s",
+                   currentChassisPowerState_.c_str(),
+                   chassisPowerState.c_str());
         currentChassisPowerState_ = chassisPowerState;
         if (chassisStateIface_)
         {
             chassisStateIface_->signal_property("CurrentPowerState");
+        }
+        else
+        {
+            LOG_WARNING("No State.Chassis interface; CurrentPowerState "
+                        "change not announced");
         }
     }
 }

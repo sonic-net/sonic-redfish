@@ -1,0 +1,174 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chinmoy Dey <chinmoy@nexthop.ai>
+Date: Mon, 16 Nov 2026 00:00:00 +0000
+Subject: [PATCH 11/11] Record an audit trail of Redfish requests
+
+Nothing recorded who changed what through Redfish: a successful reset,
+alert submission or subscription left no trace at the default log
+level, and the debug level printed credentials.
+
+ * routing.hpp: write one audit record when a state-changing or
+   refused request completes. The hook sits below route lookup, so all
+   routes are covered.
+ * http_connection.hpp, http2_connection.hpp: record requests refused
+   for missing or bad credentials, which never reach the router. Stop
+   logging the client address with each request.
+ * authentication.hpp: stop logging the Authorization header, cookie
+   values, the Basic user name and the client address.
+ * webserver_run.cpp: record service start.
+
+The record format and the allow-list of logged fields live in
+redfish_audit.hpp and redfish_audit_hook.hpp, which the build copies
+into include/ from redfish-audit/.
+
+---
+ http/http2_connection.hpp  |    2 ++
+ http/http_connection.hpp   |    7 ++++---
+ http/routing.hpp           |    5 +++++
+ include/authentication.hpp |   12 +++++-------
+ src/webserver_run.cpp      |    3 +++
+ 5 files changed, 19 insertions(+), 10 deletions(-)
+
+diff --git a/http/http2_connection.hpp b/http/http2_connection.hpp
+--- a/http/http2_connection.hpp
++++ b/http/http2_connection.hpp
+@@ -12,6 +12,7 @@
+ #include "http_request.hpp"
+ #include "http_response.hpp"
+ #include "logging.hpp"
++#include "redfish_audit_hook.hpp"
+ 
+ // NOLINTNEXTLINE(misc-include-cleaner)
+ #include "nghttp2_adapters.hpp"
+@@ -332,6 +333,7 @@
+                     thisReq.url().encoded_path(),
+                     thisReq.getHeaderValue("X-Requested-With"),
+                     thisReq.getHeaderValue("Accept"), asyncResp->res);
++                redfish_audit::recordUnauthenticated(thisReq, asyncResp->res);
+                 return 0;
+             }
+         }
+diff --git a/http/http_connection.hpp b/http/http_connection.hpp
+--- a/http/http_connection.hpp
++++ b/http/http_connection.hpp
+@@ -14,6 +14,7 @@
+ #include "http_response.hpp"
+ #include "http_utility.hpp"
+ #include "logging.hpp"
++#include "redfish_audit_hook.hpp"
+ #include "mutual_tls.hpp"
+ #include "sessions.hpp"
+ #include "str_utility.hpp"
+@@ -402,10 +403,9 @@
+             }
+         }
+ 
+-        BMCWEB_LOG_INFO("Request:  {} HTTP/{}.{} {} {} {}", logPtr(this),
++        BMCWEB_LOG_INFO("Request:  {} HTTP/{}.{} {} {}", logPtr(this),
+                         req->version() / 10, req->version() % 10,
+-                        req->methodString(), req->target(),
+-                        req->ipAddress.to_string());
++                        req->methodString(), req->url().path());
+ 
+         if (res.completed)
+         {
+@@ -425,6 +425,7 @@
+                     req->url().encoded_path(),
+                     req->getHeaderValue("X-Requested-With"),
+                     req->getHeaderValue("Accept"), res);
++                redfish_audit::recordUnauthenticated(*req, res);
+                 completeRequest(res);
+                 return;
+             }
+diff --git a/http/routing.hpp b/http/routing.hpp
+--- a/http/routing.hpp
++++ b/http/routing.hpp
+@@ -7,6 +7,7 @@
+ #include "http_request.hpp"
+ #include "http_response.hpp"
+ #include "logging.hpp"
++#include "redfish_audit_hook.hpp"
+ #include "routing/baserule.hpp"
+ #include "routing/dynamicrule.hpp"
+ #include "routing/taggedrule.hpp"
+@@ -298,6 +299,9 @@
+     void handle(const std::shared_ptr<Request>& req,
+                 const std::shared_ptr<bmcweb::AsyncResp>& asyncResp)
+     {
++        std::shared_ptr<redfish_audit::RequestContext> auditContext =
++            redfish_audit::attach(req, asyncResp);
++
+         FindRouteResponse foundRoute = findRoute(*req);
+ 
+         if (foundRoute.route.rule == nullptr)
+@@ -341,6 +345,7 @@
+         }
+ 
+         BaseRule& rule = *foundRoute.route.rule;
++        auditContext->rule = rule.rule;
+         std::vector<std::string> params = std::move(foundRoute.route.params);
+ 
+         BMCWEB_LOG_DEBUG("Matched rule '{}' {} / {}", rule.rule,
+diff --git a/include/authentication.hpp b/include/authentication.hpp
+--- a/include/authentication.hpp
++++ b/include/authentication.hpp
+@@ -66,9 +66,7 @@
+     }
+     std::string pass = authData.substr(separator);
+ 
+-    BMCWEB_LOG_DEBUG("[AuthMiddleware] Authenticating user: {}", user);
+-    BMCWEB_LOG_DEBUG("[AuthMiddleware] User IPAddress: {}",
+-                     clientIp.to_string());
++    BMCWEB_LOG_DEBUG("[AuthMiddleware] Authenticating a Basic user");
+ 
+     int pamrc = pamAuthenticateUser(user, pass, std::nullopt);
+     bool isConfigureSelfOnly = pamrc == PAM_NEW_AUTHTOK_REQD;
+@@ -142,13 +140,12 @@
+     for (auto it = cookies.first; it != cookies.second; it++)
+     {
+         std::string_view cookieValue = it->value();
+-        BMCWEB_LOG_DEBUG("Checking cookie {}", cookieValue);
++        BMCWEB_LOG_DEBUG("Checking a cookie");
+         auto startIndex = cookieValue.find("BMCWEB-SESSION=");
+         if (startIndex == std::string::npos)
+         {
+             BMCWEB_LOG_DEBUG(
+-                "Cookie was present, but didn't look like a session {}",
+-                cookieValue);
++                "Cookie was present, but didn't look like a session");
+             continue;
+         }
+         startIndex += sizeof("BMCWEB-SESSION=") - 1;
+@@ -286,7 +283,8 @@
+         }
+     }
+     std::string_view authHeader = reqHeader["Authorization"];
+-    BMCWEB_LOG_DEBUG("authHeader={}", authHeader);
++    BMCWEB_LOG_DEBUG("Authorization header {}",
++                     authHeader.empty() ? "absent" : "present");
+     if constexpr (BMCWEB_SESSION_AUTH)
+     {
+         if (sessionOut == nullptr && authMethodsConfig.sessionToken)
+diff --git a/src/webserver_run.cpp b/src/webserver_run.cpp
+--- a/src/webserver_run.cpp
++++ b/src/webserver_run.cpp
+@@ -15,6 +15,7 @@
+ #include "io_context_singleton.hpp"
+ #include "kvm_websocket.hpp"
+ #include "logging.hpp"
++#include "redfish_audit_hook.hpp"
+ #include "login_routes.hpp"
+ #include "obmc_console.hpp"
+ #include "openbmc_dbus_rest.hpp"
+@@ -70,6 +71,8 @@
+     // Load the peristent data
+     persistent_data::getConfig();
+ 
++    redfish_audit::recordStart();
++
+     // Static assets need to be initialized before Authorization, because auth
+     // needs to build the whitelist from the static routes
+ 
+-- 
+2.43.0
+

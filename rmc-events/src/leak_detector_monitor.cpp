@@ -80,13 +80,23 @@ static void onLeakDetectorPropertiesChanged(sdbusplus::message_t& msg)
     std::string interface;
     dbus::utility::DBusPropertiesMap props;
     std::vector<std::string> invalidProps;
-    msg.read(interface, props, invalidProps);
+    try
+    {
+        msg.read(interface, props, invalidProps);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        BMCWEB_LOG_ERROR("Malformed LeakDetector PropertiesChanged signal: {}",
+                         e.what());
+        return;
+    }
 
     auto found = std::ranges::find_if(props, [](const auto& x) {
         return x.first == "DetectorState";
     });
     if (found == props.end())
     {
+        BMCWEB_LOG_DEBUG("Signal for {} carries no DetectorState", interface);
         return;
     }
 

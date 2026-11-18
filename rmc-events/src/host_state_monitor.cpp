@@ -47,6 +47,7 @@ static bool mapHostStateToEvent(const std::string& stateEnum,
         "xyz.openbmc_project.State.Host.HostState.";
     if (!stateEnum.starts_with(prefix))
     {
+        BMCWEB_LOG_WARNING("Unexpected HostState format; no event sent");
         return false;
     }
     std::string_view state = std::string_view(stateEnum).substr(prefix.size());
@@ -86,13 +87,23 @@ static void onHostStatePropertiesChanged(sdbusplus::message_t& msg)
     std::string interface;
     dbus::utility::DBusPropertiesMap props;
     std::vector<std::string> invalidProps;
-    msg.read(interface, props, invalidProps);
+    try
+    {
+        msg.read(interface, props, invalidProps);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        BMCWEB_LOG_ERROR("Malformed State.Host PropertiesChanged signal: {}",
+                         e.what());
+        return;
+    }
 
     auto found = std::ranges::find_if(props, [](const auto& x) {
         return x.first == "CurrentHostState";
     });
     if (found == props.end())
     {
+        BMCWEB_LOG_DEBUG("Signal for {} carries no CurrentHostState", interface);
         return;
     }
 

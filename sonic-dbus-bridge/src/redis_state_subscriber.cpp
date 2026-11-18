@@ -401,6 +401,12 @@ void RedisStateSubscriber::subscriberLoop()
                 }
             }
         }
+        else
+        {
+            // Subscribe confirmations arrive here too, so this stays at debug.
+            LOG_DEBUG("[RedisStateSubscriber] Ignoring reply of type %d with "
+                      "%zu elements", reply->type, reply->elements);
+        }
 
         freeReplyObject(reply);
     }

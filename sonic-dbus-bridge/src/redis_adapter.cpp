@@ -11,6 +11,7 @@
 #include "redis_adapter.hpp"
 #include "host_state_mapping.hpp"
 #include "logger.hpp"
+#include <cerrno>
 #include <cstring>
 #include <fstream>
 
@@ -66,7 +67,29 @@ bool RedisAdapter::connect()
     return (configDbContext_ != nullptr) || (stateDbContext_ != nullptr);
 }
 
-redisContext* RedisAdapter::connectToDb(const std::string& host, int port, int dbIndex)
+void RedisAdapter::noteReadResult(bool ok, const char* command,
+                                  const std::string& key)
+{
+    if (ok)
+    {
+        if (readFailureLogged_)
+        {
+            LOG_NOTICE("Redis reads are working again");
+            readFailureLogged_ = false;
+        }
+        return;
+    }
+    if (!readFailureLogged_)
+    {
+        LOG_WARNING("Redis read failed: %s %s (further failures not logged "
+                    "until reads recover)",
+                    command, key.c_str());
+        readFailureLogged_ = true;
+    }
+}
+
+redisContext* RedisAdapter::connectToDb(const std::string& host, int port,
+                                        int dbIndex, bool logFailure)
 {
     struct timeval timeout = {2, 0}; // 2 seconds
     redisContext* ctx = nullptr;
@@ -127,7 +150,10 @@ redisContext* RedisAdapter::connectToDb(const std::string& host, int port, int d
 
     if (!connected || !ctx)
     {
-        LOG_ERROR("All Redis connection attempts failed");
+        if (logFailure)
+        {
+            LOG_ERROR("All Redis connection attempts failed");
+        }
         return nullptr;
     }
 
@@ -162,6 +188,7 @@ DeviceMetadata RedisAdapter::getDeviceMetadata()
     
     if (!configDbContext_)
     {
+        LOG_WARNING("DEVICE_METADATA not read: CONFIG_DB is not connected");
         return metadata; // Return empty metadata
     }
 
@@ -190,6 +217,8 @@ ChassisState RedisAdapter::getChassisState()
     
     if (!stateDbContext_)
     {
+        LOG_WARNING("CHASSIS_STATE not read: STATE_DB is not connected; "
+                    "using the default power state");
         return state; // Return default state (on)
     }
 
@@ -259,6 +288,7 @@ std::map<std::string, std::string> RedisAdapter::hgetall(redisContext* ctx,
     
     if (!reply)
     {
+        noteReadResult(false, "HGETALL", key);
         return result;
     }
     
@@ -275,19 +305,53 @@ std::map<std::string, std::string> RedisAdapter::hgetall(redisContext* ctx,
         }
     }
     
+    if (reply->type == REDIS_REPLY_ERROR)
+    {
+        // An error reply (WRONGTYPE, LOADING) is a failed read, not an
+        // empty hash.
+        LOG_WARNING("Redis HGETALL %s answered with an error: %s",
+                    key.c_str(), reply->str);
+        freeReplyObject(reply);
+        noteReadResult(false, "HGETALL", key);
+        return result;
+    }
+
     freeReplyObject(reply);
+    noteReadResult(true, "HGETALL", key);
+    // Field count only: values may hold data that must not be logged.
+    LOG_DEBUG("Redis read ok: HGETALL %s (%zu fields)", key.c_str(),
+              result.size());
     return result;
 }
 
 std::optional<std::string> RedisAdapter::getRedfishClientCnames()
 {
-    // Read directly rather than through hget(), which cannot distinguish a
-    // field that is not set from a read that failed. That difference decides
-    // whether client certificates are accepted, so it must not be lost.
+    // Not read through hget(), which cannot distinguish a field that is not
+    // set from a read that failed. That difference decides whether client
+    // certificates are accepted, so it must not be lost.
+    return readConfigField("REDFISH|certs", "client_crt_cname", true);
+}
+
+std::optional<std::string> RedisAdapter::getLogLevel()
+{
+    // The caller reports a failure itself, and retries.
+    return readConfigField("LOGGER|sonic-dbus-bridge", "LOGLEVEL", false);
+}
+
+redisContext* RedisAdapter::openConfigDbConnection()
+{
+    return connectToDb(configDbHost_, configDbPort_, 4, false);
+}
+
+std::optional<std::string> RedisAdapter::readConfigField(const char* key,
+                                                         const char* field,
+                                                         bool logFailure)
+{
     if (!configDbContext_)
     {
         // Not connected at startup, or dropped after an I/O error below.
-        configDbContext_ = connectToDb(configDbHost_, configDbPort_, 4);
+        configDbContext_ =
+            connectToDb(configDbHost_, configDbPort_, 4, logFailure);
         if (!configDbContext_)
         {
             return std::nullopt;
@@ -295,14 +359,16 @@ std::optional<std::string> RedisAdapter::getRedfishClientCnames()
     }
 
     redisReply* reply = static_cast<redisReply*>(
-        redisCommand(configDbContext_, "HGET %s %s", "REDFISH|certs",
-                     "client_crt_cname"));
+        redisCommand(configDbContext_, "HGET %s %s", key, field));
     if (!reply)
     {
         // hiredis leaves the context unusable after an I/O error, so drop it
         // and reconnect on the next read.
-        LOG_WARNING("CONFIG_DB read of client_crt_cname failed: %s",
-                    configDbContext_->errstr);
+        if (logFailure)
+        {
+            LOG_WARNING("CONFIG_DB read of %s failed: %s", field,
+                        configDbContext_->errstr);
+        }
         redisFree(configDbContext_);
         configDbContext_ = nullptr;
         return std::nullopt;
@@ -317,11 +383,11 @@ std::optional<std::string> RedisAdapter::getRedfishClientCnames()
     {
         result = std::string(); // readable, field not set
     }
-    else
+    else if (logFailure)
     {
         // An error reply (e.g. LOADING while Redis starts) is a failed read,
         // not an unset field.
-        LOG_WARNING("CONFIG_DB read of client_crt_cname failed: %s",
+        LOG_WARNING("CONFIG_DB read of %s failed: %s", field,
                     reply->type == REDIS_REPLY_ERROR ? reply->str
                                                      : "unexpected reply type");
     }
@@ -339,6 +405,7 @@ std::optional<std::string> RedisAdapter::hget(redisContext* ctx,
     
     if (!reply)
     {
+        noteReadResult(false, "HGET", key);
         return std::nullopt;
     }
     
@@ -347,8 +414,20 @@ std::optional<std::string> RedisAdapter::hget(redisContext* ctx,
     {
         result = std::string(reply->str, reply->len);
     }
+    else if (reply->type == REDIS_REPLY_ERROR)
+    {
+        // An error reply is a failed read, not an absent field.
+        LOG_WARNING("Redis HGET %s %s answered with an error: %s",
+                    key.c_str(), field.c_str(), reply->str);
+        freeReplyObject(reply);
+        noteReadResult(false, "HGET", key);
+        return std::nullopt;
+    }
     
     freeReplyObject(reply);
+    noteReadResult(true, "HGET", key);
+    LOG_DEBUG("Redis read ok: HGET %s %s (%s)", key.c_str(), field.c_str(),
+              result ? "found" : "absent");
     return result;
 }
 
@@ -357,6 +436,8 @@ static std::string readSonicVersionField(const std::string& field)
     std::ifstream f("/etc/sonic/sonic_version.yml");
     if (!f.is_open())
     {
+        LOG_DEBUG("Cannot open /etc/sonic/sonic_version.yml: %s",
+                  strerror(errno));
         return "";
     }
     std::string line;
@@ -470,7 +551,14 @@ std::vector<std::string> RedisAdapter::keys(redisContext* ctx,
 
     if (!reply)
     {
+        LOG_WARNING("Redis KEYS %s failed: %s", pattern.c_str(), ctx->errstr);
         return result;
+    }
+
+    if (reply->type == REDIS_REPLY_ERROR)
+    {
+        LOG_WARNING("Redis KEYS %s answered with an error: %s",
+                    pattern.c_str(), reply->str);
     }
 
     if (reply->type == REDIS_REPLY_ARRAY)
@@ -550,6 +638,8 @@ std::vector<LeakSensorInfo> RedisAdapter::getLeakSensors()
         size_t pos = key.find('|');
         if (pos == std::string::npos || pos + 1 >= key.size())
         {
+            LOG_DEBUG("Skipping leak sensor key with no sensor name: %s",
+                      key.c_str());
             continue;
         }
         std::string sensorName = key.substr(pos + 1);
@@ -557,6 +647,8 @@ std::vector<LeakSensorInfo> RedisAdapter::getLeakSensors()
         auto fields = hgetall(stateDbContext_, key);
         if (fields.empty())
         {
+            LOG_WARNING("Leak sensor %s left out: no fields could be read",
+                        key.c_str());
             continue;
         }
 

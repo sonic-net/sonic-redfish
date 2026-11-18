@@ -84,6 +84,10 @@ inline void handleSonicSubmitAlert(
     }
     if (!hasEnvelope)
     {
+        // Key names come from the request, so only their number is logged.
+        BMCWEB_LOG_WARNING(
+            "SONiC.SubmitAlert: no 'redfish*' envelope key ({} top-level keys)",
+            reqJson->is_object() ? reqJson->size() : 0);
         messages::propertyMissing(asyncResp->res, "redfish");
         return;
     }
@@ -113,6 +117,7 @@ inline void handleSonicSubmitAlert(
                 messages::operationFailed(asyncResp->res);
                 return;
             }
+            BMCWEB_LOG_INFO("SONiC.SubmitAlert: accepted by bridge");
             asyncResp->res.result(
                 boost::beast::http::status::no_content);
         },

@@ -45,6 +45,24 @@ if [ ! -S /run/dbus/system_bus_socket ]; then
 fi
 echo "  dbus-daemon ready (pid=$DBUS_PID)"
 
+# --------------
+# syslog capture
+# --------------
+# There is no syslog daemon in the test container. Listen on /dev/log so the
+# audit records bmcweb sends there can be read back by the tests.
+echo "Starting syslog capture..."
+python3 -u /workspace/tests/redfish-api/framework/syslog_capture.py \
+    "$LOG_DIR/syslog.log" &> "$LOG_DIR/syslog_capture.log" &
+for i in $(seq 1 30); do
+    [ -S /dev/log ] && break
+    sleep 0.2
+done
+if [ ! -S /dev/log ]; then
+    echo "FATAL: syslog capture did not start" >&2
+    exit 1
+fi
+echo "  syslog capture ready"
+
 # -----
 # Redis
 # -----
