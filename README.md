@@ -224,9 +224,10 @@ Current patches:
    Chassis-level `LeakDetectors` collection from the Chassis resource
 8. `0008-Switch-Host-power-events-and-supported-ResetTypes.patch` - Sends host
    power events and restricts `ComputerSystem.Reset` to the supported ResetTypes
-9. `0009-Remove-mTLS-session-when-its-connection-is-destroyed.patch` - Removes a
-   MutualTLS session together with its connection and closes idle HTTP/1
-   keep-alive and HTTP/2 connections
+10. `0010-Remove-mTLS-session-when-its-connection-is-destroyed.patch` - Removes a
+   MutualTLS session together with its connection, closes idle HTTP/1
+   keep-alive and HTTP/2 connections, and enables TCP keepalive on event
+   streams
 
 To add a new patch:
 1. Make changes in bmcweb source directory.
