@@ -190,6 +190,13 @@ bridge drains the write asynchronously.
 | [cases/chassis.json](redfish-api/cases/chassis.json)            | inventory fields surfaced from CONFIG_DB `DEVICE_METADATA`                                                                                                     |
 | [cases/oem_manager.json](redfish-api/cases/oem_manager.json)    | OEM RackManager: action discovery, `SubmitAlert` / `SubmitTelemetry` end-to-end into STATE_DB, negative paths (400/401/405) with Redfish error-body assertions |
 
+Checks that need more than one request and response are written in
+Python next to the runner:
+
+| File                                                                              | Scope                                                                                                                                             |
+|-----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
+| [framework/test_mtls_sessions.py](redfish-api/framework/test_mtls_sessions.py)    | An mTLS session is listed while its connection is open and leaves the session collection when it closes: client close, server close and HTTP/2   |
+
 > **Note:** Skipped modules use `"skip": true` or similar logic in the
 > framework if needed.
 

@@ -1,0 +1,730 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chinmoy Dey <chinmoy@nexthop.ai>
+Date: Sat, 14 Nov 2026 00:00:00 +0000
+Subject: [PATCH 10/10] Remove mTLS session when its connection is destroyed
+
+bmcweb creates one MutualTLS UserSession in the session store for every
+TLS handshake that presents a valid client certificate
+(tlsVerifyCallback -> verifyMtlsUser -> generateUserSession). The session
+was removed again only in Connection::gracefulClose(), i.e. when the
+server decides to close the connection. Every other teardown path left
+the session in SessionStore::authTokens:
+  - the client closes the connection first (EOF on read -> hardClose())
+  - read/write errors and the connection deadline timer (hardClose())
+  - every HTTP/2 connection: HTTP2Connection holds the session but never
+    removes it
+  - WebSocket and SSE upgrades, which take over the socket
+
+The idle timeout did not bound the growth either, because
+applySessionTimeouts() only runs from token/cookie logins and from
+SessionService reads, which a certificate-only client never triggers.
+A client that opens one mTLS connection per request therefore grows the
+session table, and bmcweb RSS, by one entry per request for as long as
+the process runs (sonic-net/sonic-redfish#44).
+
+Session lifetime
+  - sessions.hpp: add bindSessionToConnection(). It returns a pointer to
+    the same UserSession that also shares ownership of a
+    ConnectionBoundSession; when the last copy of that pointer is
+    released the session is removed from the store. The store's own
+    reference does not count
+  - http_connection.hpp: tlsVerifyCallback() binds the session it gets
+    from verifyMtlsUser(). Every holder on the connection side then keeps
+    the session listed for exactly as long as it is in use: the HTTP/1
+    connection, the HTTP/2 connection it upgrades to, a WebSocket
+    connection (which stores req.session), an SSE connection and requests
+    still being handled. No per-path hand-off is needed, and a failed
+    upgrade cannot strand the session. Re-assigning in
+    tlsVerifyCallback() releases a session from an earlier verification
+  - http_connection.hpp: gracefulClose() no longer removes the session
+    itself. That removed it under a request still being handled, and is
+    redundant now. The TLS shutdown it starts gets the 15 second
+    deadline; it waited for the peer's close_notify with no timer, which
+    would now keep the session listed for as long
+  - server_sent_event_impl.hpp: keep req.session for the life of the
+    event stream; it kept no reference, so the session of a live stream
+    would have left the store
+  - sessions.hpp: applySessionTimeouts() skips MutualTLS sessions.
+    lastUpdated is never refreshed for them, so the sweep expired the
+    session of a connection that was still open and authorized, hiding
+    it from SessionService and from removeSessionsByUsername(). They are
+    never read back from the persistence file, so every one of them has
+    a connection-side owner, and each kind of owner is bounded (below)
+  - sessions.hpp: run applySessionTimeouts() in generateUserSession() so
+    token sessions are expired even if no token login or SessionService
+    read ever happens, and do not let generateUserSession() clear the
+    needWrite that the sweep just set
+
+Idle connections
+The connection now being the only thing that removes its session, every
+kind of connection has to end when its peer is gone. Neither HTTP
+version bounded an idle connection, an event stream had no timer while
+idle, and bmcweb sets no TCP keepalive, so a peer that goes silent or
+disappears without closing the socket held the connection, its file
+descriptor and its mTLS session until bmcweb restarted. (A WebSocket is
+already covered by the idle timeout and pings of the Beast stream.)
+  - http_connection.hpp: the 15 second deadline covers the handshake and
+    an in-progress read or write, but afterDoWrite() cancels it and the
+    keep-alive path waits for the next request header with no timer.
+    Arm a 60 second deadline there, and cancel it when the request
+    header has arrived, so that it times the wait only and not the
+    handling of that request
+  - http_connection.hpp: startDeadline() takes the timeout.
+    cancelDeadlineTimer() clears timerStarted itself instead of leaving
+    that to the handler of the cancelled wait: the handler runs later
+    and cleared the flag of a deadline armed in the meantime, or left it
+    set so that the next startDeadline() armed nothing
+  - http2_connection.hpp: add a timer, re-armed on every completed read
+    and write. With no request open, the connection gets a GOAWAY and is
+    closed after 60 seconds without traffic. With a request open, it is
+    closed once the request has made no progress for 300 seconds.
+    Progress is a new request, request body data or response data, not
+    traffic as such: a stream is opened by the first HEADERS frame, and
+    PING or WINDOW_UPDATE frames keep bytes moving without advancing it,
+    so neither an open stream nor a trickle of frames can keep a
+    connection forever. A slow upload, download or handler is not cut
+    off
+  - http2_connection.hpp: the timer handler re-checks expiry(), so a
+    handler queued just before the timer was re-armed does not close a
+    connection that saw traffic
+  - http2_connection.hpp: the completion handler captured a raw `this`.
+    Capture a weak_ptr, since the connection can now be closed while a
+    handler is still running (this was already reachable on peer EOF)
+  - nghttp2_adapters.hpp: add terminateSession() for the GOAWAY
+  - server_sent_event_impl.hpp: enable TCP keepalive on the socket of an
+    event stream (60 s idle, 6 probes 10 s apart). The pending read
+    reports a clean close but not a peer that vanished, and the only
+    timer covers a write in progress. An answering peer is left alone
+    however long the stream is quiet
+
+Signed-off-by: Chinmoy Dey <chinmoy@nexthop.ai>
+---
+ http/http2_connection.hpp       | 173 +++++++++++++++++++++++++++++++-
+ http/http_connection.hpp        |  69 +++++++++----
+ http/nghttp2_adapters.hpp       |   5 +
+ http/server_sent_event_impl.hpp |  61 +++++++++++
+ include/sessions.hpp            |  67 ++++++++++++-
+ 5 files changed, 353 insertions(+), 22 deletions(-)
+
+diff --git a/http/http2_connection.hpp b/http/http2_connection.hpp
+index 65265e17..eb32a5c6 100644
+--- a/http/http2_connection.hpp
++++ b/http/http2_connection.hpp
+@@ -21,7 +21,9 @@
+ #include <unistd.h>
+ 
+ #include <boost/asio/buffer.hpp>
++#include <boost/asio/error.hpp>
+ #include <boost/asio/ssl/stream.hpp>
++#include <boost/asio/steady_timer.hpp>
+ #include <boost/beast/core/error.hpp>
+ #include <boost/beast/http/field.hpp>
+ #include <boost/beast/http/fields.hpp>
+@@ -33,6 +35,7 @@
+ 
+ #include <array>
+ #include <bit>
++#include <chrono>
+ #include <cstddef>
+ #include <cstdint>
+ #include <functional>
+@@ -71,6 +74,7 @@ class HTTP2Connection :
+         std::function<std::string()>& getCachedDateStrF, HttpType httpTypeIn,
+         const std::shared_ptr<persistent_data::UserSession>& mtlsSessionIn) :
+         httpType(httpTypeIn), adaptor(std::move(adaptorIn)),
++        idleTimer(adaptor.get_executor()),
+         ngSession(initializeNghttp2Session()), handler(handlerIn),
+         getCachedDateStr(getCachedDateStrF), mtlsSession(mtlsSessionIn)
+     {}
+@@ -154,6 +158,7 @@ class HTTP2Connection :
+         }
+         Http2StreamData& stream = streamIt->second;
+         BMCWEB_LOG_DEBUG("File read callback length: {}", length);
++        self.noteRequestProgress();
+         if (!stream.writer)
+         {
+             return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
+@@ -219,6 +224,7 @@ class HTTP2Connection :
+             return -1;
+         }
+         Http2StreamData& stream = it->second;
++        noteRequestProgress();
+         Response& res = stream.res;
+         res = std::move(completedRes);
+ 
+@@ -309,11 +315,18 @@ class HTTP2Connection :
+         Response& thisRes = it->second.res;
+ 
+         thisRes.setCompleteRequestHandler(
+-            [this, streamId](Response& completeRes) {
++            [weakSelf(weak_from_this()), streamId](Response& completeRes) {
+                 BMCWEB_LOG_DEBUG("res.completeRequestHandler called");
+-                if (sendResponse(completeRes, streamId) != 0)
++                // The connection can be closed and destroyed (peer EOF,
++                // idle timeout) while the handler is still running.
++                std::shared_ptr<self_type> self = weakSelf.lock();
++                if (self == nullptr)
+                 {
+-                    close();
++                    return;
++                }
++                if (self->sendResponse(completeRes, streamId) != 0)
++                {
++                    self->close();
+                     return;
+                 }
+             });
+@@ -356,6 +369,7 @@ class HTTP2Connection :
+             close();
+             return -1;
+         }
++        noteRequestProgress();
+ 
+         std::optional<bmcweb::HttpBody::reader>& reqReader =
+             thisStream->second.reqReader;
+@@ -548,6 +562,7 @@ class HTTP2Connection :
+             BMCWEB_LOG_DEBUG("create stream for id {}", frame.hd.stream_id);
+ 
+             streams[frame.hd.stream_id];
++            noteRequestProgress();
+             if (ngSession.setLocalWindowSize(
+                     NGHTTP2_FLAG_NONE, frame.hd.stream_id, 16384 * 32) != 0)
+             {
+@@ -586,6 +601,17 @@ class HTTP2Connection :
+             self->close();
+             return;
+         }
++        if (self->goingAway)
++        {
++            // Flush what is left (the GOAWAY frame), then close
++            self->writeBuffer();
++            if (!self->isWriting)
++            {
++                self->close();
++            }
++            return;
++        }
++        self->restartIdleTimer();
+         self->writeBuffer();
+     }
+ 
+@@ -618,9 +644,143 @@ class HTTP2Connection :
+ 
+     void close()
+     {
++        idleTimer.cancel();
+         adaptor.next_layer().close();
+     }
+ 
++    // An HTTP/2 connection had no timer at all, so a peer that goes silent
++    // or disappears without closing the socket held the connection, its file
++    // descriptor and its mTLS session until the process restarted.
++    //
++    // Which bound applies depends on whether a request is open:
++    //   - idleTimeout, with no request open: no bytes moved in either
++    //     direction.
++    //   - requestStallTimeout, with a request open: the request made no
++    //     progress.  A stream is opened by the first HEADERS frame, before
++    //     the client has to finish the request, so an open stream cannot be
++    //     told apart from a peer that will never complete it.  Traffic alone
++    //     does not count: PING and WINDOW_UPDATE frames keep bytes moving
++    //     without advancing any request, so a peer could otherwise hold a
++    //     connection open forever at a few bytes a minute.  Progress is a
++    //     new request, request body data, or response data (see
++    //     noteRequestProgress()), so a slow upload, download or handler is
++    //     not cut off, as it is not on HTTP/1.
++    static constexpr std::chrono::seconds idleTimeout{60};
++    static constexpr std::chrono::seconds requestStallTimeout{300};
++    // How long the peer gets to read the GOAWAY before the socket is closed
++    static constexpr std::chrono::seconds goAwayTimeout{5};
++
++    void noteRequestProgress()
++    {
++        lastRequestProgress = std::chrono::steady_clock::now();
++    }
++
++    // streams always holds the control stream (id 0); anything beyond that
++    // is a request that is open.
++    bool hasOpenRequest() const
++    {
++        return streams.size() > 1;
++    }
++
++    std::chrono::steady_clock::time_point idleDeadline() const
++    {
++        if (hasOpenRequest())
++        {
++            return lastRequestProgress + requestStallTimeout;
++        }
++        return lastTraffic + idleTimeout;
++    }
++
++    void armTimerAt(std::chrono::steady_clock::time_point deadline)
++    {
++        // expires_at() cancels a wait that is still pending
++        idleTimer.expires_at(deadline);
++        idleTimer.async_wait(
++            std::bind_front(&self_type::afterIdleTimer, weak_from_this()));
++    }
++
++    // Called whenever bytes were read from or written to the peer
++    void restartIdleTimer()
++    {
++        if (goingAway)
++        {
++            return;
++        }
++        lastTraffic = std::chrono::steady_clock::now();
++        armTimerAt(idleDeadline());
++    }
++
++    static void afterIdleTimer(const std::weak_ptr<self_type>& weakSelf,
++                               const boost::system::error_code& ec)
++    {
++        if (ec == boost::asio::error::operation_aborted)
++        {
++            // Timer was restarted or the connection was closed
++            return;
++        }
++        std::shared_ptr<self_type> self = weakSelf.lock();
++        if (self == nullptr)
++        {
++            return;
++        }
++        if (ec)
++        {
++            BMCWEB_LOG_CRITICAL("{} idle timer failed {}", logPtr(self.get()),
++                                ec);
++            self->close();
++            return;
++        }
++        if (self->idleTimer.expiry() > std::chrono::steady_clock::now())
++        {
++            // The timer was re-armed after this handler had already been
++            // queued; the connection saw traffic and is not idle.
++            return;
++        }
++        self->onIdleTimeout();
++    }
++
++    void onIdleTimeout()
++    {
++        if (goingAway)
++        {
++            BMCWEB_LOG_DEBUG("{} GOAWAY not flushed in time, closing",
++                             logPtr(this));
++            close();
++            return;
++        }
++        // A request may have been opened or closed since the timer was
++        // armed, which changes the bound that applies.
++        std::chrono::steady_clock::time_point deadline = idleDeadline();
++        if (deadline > std::chrono::steady_clock::now())
++        {
++            armTimerAt(deadline);
++            return;
++        }
++        if (hasOpenRequest())
++        {
++            BMCWEB_LOG_WARNING(
++                "{} HTTP/2 request made no progress for {} seconds, closing",
++                logPtr(this), requestStallTimeout.count());
++        }
++        BMCWEB_LOG_DEBUG("{} HTTP/2 connection idle, sending GOAWAY",
++                         logPtr(this));
++        // Tell the peer which streams were processed before closing, so a
++        // request it sent just before the timeout can be retried safely.
++        goingAway = true;
++        if (ngSession.terminateSession(NGHTTP2_NO_ERROR) != 0)
++        {
++            close();
++            return;
++        }
++        armTimerAt(std::chrono::steady_clock::now() + goAwayTimeout);
++        writeBuffer();
++        if (!isWriting)
++        {
++            // Nothing could be queued; no point in waiting
++            close();
++        }
++    }
++
+     void afterDoRead(const std::shared_ptr<self_type>& /*self*/,
+                      const boost::system::error_code& ec,
+                      size_t bytesTransferred)
+@@ -658,6 +818,7 @@ class HTTP2Connection :
+     void doRead()
+     {
+         BMCWEB_LOG_DEBUG("{} doRead", logPtr(this));
++        restartIdleTimer();
+         if (httpType == HttpType::HTTPS)
+         {
+             adaptor.async_read_some(boost::asio::buffer(inBuffer),
+@@ -680,6 +841,12 @@ class HTTP2Connection :
+ 
+     HttpType httpType = HttpType::BOTH;
+     boost::asio::ssl::stream<Adaptor> adaptor;
++    boost::asio::steady_timer idleTimer;
++    std::chrono::steady_clock::time_point lastTraffic =
++        std::chrono::steady_clock::now();
++    std::chrono::steady_clock::time_point lastRequestProgress =
++        std::chrono::steady_clock::now();
++    bool goingAway = false;
+     bool isWriting = false;
+ 
+     nghttp2_session ngSession;
+diff --git a/http/http_connection.hpp b/http/http_connection.hpp
+index 8e68bf5b..35d74612 100644
+--- a/http/http_connection.hpp
++++ b/http/http_connection.hpp
+@@ -113,7 +113,14 @@ class Connection :
+                          logPtr(this), preverified);
+         if (preverified)
+         {
+-            mtlsSession = verifyMtlsUser(ip, ctx);
++            // Tie the session to this connection: it leaves the session
++            // store when the last connection-side reference is released,
++            // on every teardown path (client EOF, read/write error, deadline
++            // timeout, HTTP/2, WebSocket and SSE upgrade), not only on a
++            // server initiated gracefulClose().  Assigning also releases a
++            // session from an earlier verification on this connection.
++            mtlsSession = persistent_data::bindSessionToConnection(
++                verifyMtlsUser(ip, ctx));
+             if (mtlsSession)
+             {
+                 BMCWEB_LOG_DEBUG("{} Generated TLS session: {}", logPtr(this),
+@@ -472,14 +479,13 @@ class Connection :
+ 
+         if (httpType == HttpType::HTTPS)
+         {
+-            if (mtlsSession != nullptr)
+-            {
+-                BMCWEB_LOG_DEBUG("{} Removing TLS session: {}", logPtr(this),
+-                                 mtlsSession->uniqueId);
+-                persistent_data::SessionStore::getInstance().removeSession(
+-                    mtlsSession);
+-            }
+-
++            // The mTLS session is not removed here: it is bound to the
++            // connection (see tlsVerifyCallback()) and leaves the session
++            // store when the last holder releases it, which may be a request
++            // that is still being handled.  The deadline bounds the TLS
++            // shutdown, which otherwise waits for the peer's close_notify
++            // with no timer and would keep the session listed meanwhile.
++            startDeadline();
+             adaptor.async_shutdown(std::bind_front(
+                 &self_type::tlsShutdownComplete, this, shared_from_this()));
+         }
+@@ -621,6 +627,15 @@ class Connection :
+             return;
+         }
+ 
++        if (keepAliveWait)
++        {
++            // The keep-alive deadline only covers the wait for this request.
++            // Left running, it would also time the handling of the request
++            // and close the connection under a handler that is still busy.
++            keepAliveWait = false;
++            cancelDeadlineTimer();
++        }
++
+         if (!parser)
+         {
+             BMCWEB_LOG_ERROR("Parser was unexpectedly null");
+@@ -827,6 +842,13 @@ class Connection :
+         userSession = nullptr;
+ 
+         req->clear();
++        // Waiting for the next request on a keep-alive connection had no
++        // deadline at all, so a client that went silent, or vanished without
++        // closing the socket, held the connection and its mTLS session until
++        // the process restarted.  afterReadHeaders() cancels it again, so it
++        // times the wait only, not the request that follows.
++        keepAliveWait = true;
++        startDeadline(keepAliveIdleTimeout);
+         doReadHeaders();
+     }
+ 
+@@ -863,6 +885,11 @@ class Connection :
+     void cancelDeadlineTimer()
+     {
+         timer.cancel();
++        // Cleared here and not by the handler of the cancelled wait: that
++        // handler runs later, and would clear the flag of a deadline that
++        // was armed in the meantime, which the next startDeadline() would
++        // then silently replace.
++        timerStarted = false;
+     }
+ 
+     void afterTimerWait(const std::weak_ptr<self_type>& weakSelf,
+@@ -887,15 +914,18 @@ class Connection :
+             return;
+         }
+ 
++        if (ec == boost::asio::error::operation_aborted)
++        {
++            // cancelDeadlineTimer() already cleared timerStarted; a new
++            // deadline may be running by now and must keep its flag.
++            BMCWEB_LOG_DEBUG("{} Timer canceled", logPtr(self.get()));
++            return;
++        }
++
+         self->timerStarted = false;
+ 
+         if (ec)
+         {
+-            if (ec == boost::asio::error::operation_aborted)
+-            {
+-                BMCWEB_LOG_DEBUG("{} Timer canceled", logPtr(self.get()));
+-                return;
+-            }
+             BMCWEB_LOG_CRITICAL("{} Timer failed {}", logPtr(self.get()), ec);
+         }
+ 
+@@ -905,7 +935,12 @@ class Connection :
+         self->hardClose();
+     }
+ 
+-    void startDeadline()
++    // Deadline for the handshake and for a read or write in progress
++    static constexpr std::chrono::seconds ioTimeout{15};
++    // How long a keep-alive connection may wait for its next request
++    static constexpr std::chrono::seconds keepAliveIdleTimeout{60};
++
++    void startDeadline(std::chrono::seconds timeout = ioTimeout)
+     {
+         // Timer is already started so no further action is required.
+         if (timerStarted)
+@@ -913,8 +948,6 @@ class Connection :
+             return;
+         }
+ 
+-        std::chrono::seconds timeout(15);
+-
+         std::weak_ptr<Connection<Adaptor, Handler>> weakSelf = weak_from_this();
+         timer.expires_after(timeout);
+         timer.async_wait(std::bind_front(&self_type::afterTimerWait, this,
+@@ -953,6 +986,8 @@ class Connection :
+     bool keepAlive = true;
+ 
+     bool timerStarted = false;
++    // The running deadline is the keep-alive wait for the next request
++    bool keepAliveWait = false;
+ 
+     std::function<std::string()>& getCachedDateStr;
+ 
+diff --git a/http/nghttp2_adapters.hpp b/http/nghttp2_adapters.hpp
+index 15bde7c6..2d9cf57c 100644
+--- a/http/nghttp2_adapters.hpp
++++ b/http/nghttp2_adapters.hpp
+@@ -149,6 +149,11 @@ struct nghttp2_session
+             settingsPayload.size(), headRequest ? 1 : 0, nullptr);
+     }
+ 
++    int terminateSession(uint32_t errorCode)
++    {
++        return nghttp2_session_terminate_session(ptr, errorCode);
++    }
++
+     void setUserData(void* object)
+     {
+         nghttp2_session_set_user_data(ptr, object);
+diff --git a/http/server_sent_event_impl.hpp b/http/server_sent_event_impl.hpp
+index 5da3a8e0..2458bed0 100644
+--- a/http/server_sent_event_impl.hpp
++++ b/http/server_sent_event_impl.hpp
+@@ -7,12 +7,19 @@
+ #include "io_context_singleton.hpp"
+ #include "logging.hpp"
+ #include "server_sent_event.hpp"
++#include "sessions.hpp"
++
++#include <netinet/in.h>
++#include <netinet/tcp.h>
++#include <sys/socket.h>
+ 
+ #include <boost/asio/buffer.hpp>
+ #include <boost/asio/error.hpp>
++#include <boost/asio/socket_base.hpp>
+ #include <boost/asio/steady_timer.hpp>
+ #include <boost/beast/core/error.hpp>
+ #include <boost/beast/core/multi_buffer.hpp>
++#include <boost/beast/core/stream_traits.hpp>
+ #include <boost/beast/http/field.hpp>
+ #include <boost/beast/http/serializer.hpp>
+ #include <boost/beast/http/write.hpp>
+@@ -63,6 +70,13 @@ class ConnectionImpl : public Connection
+     {
+         BMCWEB_LOG_DEBUG("Starting SSE connection");
+ 
++        // Keep the session of the upgraded request for as long as the event
++        // stream is open.  A connection bound (MutualTLS) session would
++        // otherwise leave the session store as soon as the HTTP connection
++        // that handed over its socket is destroyed.
++        session = req.session;
++        enableTcpKeepAlive();
++
+         res.set(boost::beast::http::field::content_type, "text/event-stream");
+         boost::beast::http::response_serializer<BodyType>& serial =
+             serializer.emplace(res);
+@@ -221,6 +235,52 @@ class ConnectionImpl : public Connection
+         inputBuffer.commit(copied);
+     }
+ 
++    // An event stream has no timer while it is idle: the only one covers a
++    // write in progress, and the pending read reports a clean close but not a
++    // peer that disappears without one (power loss, a dropped link).  Such a
++    // stream stayed open forever, and with it the subscription and the
++    // session it holds, which for a MutualTLS session is the only thing that
++    // removes it from the session store.  TCP keepalive makes the kernel
++    // probe an idle peer and fail the pending read once it stops answering;
++    // an answering peer is left alone however long the stream is quiet.
++    // Detection takes keepAliveIdle + keepAliveCount * keepAliveInterval.
++    static constexpr int keepAliveIdle = 60;
++    static constexpr int keepAliveInterval = 10;
++    static constexpr int keepAliveCount = 6;
++
++    void enableTcpKeepAlive()
++    {
++        auto& socket = boost::beast::get_lowest_layer(adaptor);
++        // Only a real socket has the option; a test stream does not.
++        if constexpr (requires {
++                          socket.set_option(
++                              boost::asio::socket_base::keep_alive(true));
++                          socket.native_handle();
++                      })
++        {
++            boost::system::error_code ec;
++            socket.set_option(boost::asio::socket_base::keep_alive(true), ec);
++            if (ec)
++            {
++                BMCWEB_LOG_WARNING("{} Failed to enable TCP keepalive: {}",
++                                   logPtr(this), ec);
++                return;
++            }
++            int fd = socket.native_handle();
++            if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepAliveIdle,
++                           sizeof(keepAliveIdle)) != 0 ||
++                setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepAliveInterval,
++                           sizeof(keepAliveInterval)) != 0 ||
++                setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &keepAliveCount,
++                           sizeof(keepAliveCount)) != 0)
++            {
++                // Keepalive stays on with the system-wide timing
++                BMCWEB_LOG_WARNING("{} Failed to set TCP keepalive timing",
++                                   logPtr(this));
++            }
++        }
++    }
++
+     void startTimeout()
+     {
+         std::weak_ptr<Connection> weakSelf = weak_from_this();
+@@ -267,6 +327,7 @@ class ConnectionImpl : public Connection
+     boost::beast::http::response<BodyType> res;
+     std::optional<boost::beast::http::response_serializer<BodyType>> serializer;
+     boost::asio::steady_timer timer;
++    std::shared_ptr<persistent_data::UserSession> session;
+     bool doingWrite = false;
+ 
+     std::function<void(Connection&, const Request&)> openHandler;
+diff --git a/include/sessions.hpp b/include/sessions.hpp
+index 2c9613a2..43efe879 100644
+--- a/include/sessions.hpp
++++ b/include/sessions.hpp
+@@ -266,6 +266,12 @@ class SessionStore
+         const std::optional<std::string>& clientId, SessionType sessionType,
+         bool isConfigureSelfOnly = false)
+     {
++        // Expire stale sessions on creation as well, so that the store is
++        // bounded even when no caller ever logs in by token or reads
++        // SessionService (e.g. a client that keeps creating sessions and
++        // never presents the token).
++        applySessionTimeouts();
++
+         // Only need csrf tokens for cookie based auth, token doesn't matter
+         std::string sessionToken =
+             bmcweb::getRandomIdOfLength(sessionTokenSize);
+@@ -294,8 +300,10 @@ class SessionStore
+             {}});
+         auto it = authTokens.emplace(sessionToken, session);
+         // Only need to write to disk if session isn't about to be destroyed.
+-        needWrite = sessionType != SessionType::Basic &&
+-                    sessionType != SessionType::MutualTLS;
++        // Do not clear a pending write requested by applySessionTimeouts()
++        // above.
++        needWrite = needWrite || (sessionType != SessionType::Basic &&
++                                  sessionType != SessionType::MutualTLS);
+         return it.first->second;
+     }
+ 
+@@ -450,6 +458,18 @@ class SessionStore
+             auto authTokensIt = authTokens.begin();
+             while (authTokensIt != authTokens.end())
+             {
++                // A MutualTLS session is bound to its connection: it is
++                // created by the TLS handshake and removed when the
++                // connection goes away (see bindSessionToConnection()).
++                // lastUpdated is never refreshed for it, so expiring it here
++                // would drop the session of a connection that is still open
++                // and authorized, hiding it from SessionService and from
++                // removeSessionsByUsername().
++                if (authTokensIt->second->sessionType == SessionType::MutualTLS)
++                {
++                    authTokensIt++;
++                    continue;
++                }
+                 if (timeNow - authTokensIt->second->lastUpdated >=
+                     timeoutInSeconds)
+                 {
+@@ -484,4 +504,47 @@ class SessionStore
+     SessionStore() : timeoutInSeconds(1800) {}
+ };
+ 
++// Owner of a session whose lifetime is that of one client connection (a
++// MutualTLS session created by the TLS handshake).  The session is removed
++// from the SessionStore when the last connection-side reference goes away,
++// whichever object that is: the HTTP/1 connection, the HTTP/2 connection it
++// upgraded to, a WebSocket or SSE connection it handed its socket to, or a
++// request still being handled.
++struct ConnectionBoundSession
++{
++    explicit ConnectionBoundSession(
++        const std::shared_ptr<UserSession>& sessionIn) : session(sessionIn)
++    {}
++
++    ~ConnectionBoundSession()
++    {
++        if (session != nullptr)
++        {
++            SessionStore::getInstance().removeSession(session);
++        }
++    }
++
++    ConnectionBoundSession(const ConnectionBoundSession&) = delete;
++    ConnectionBoundSession(ConnectionBoundSession&&) = delete;
++    ConnectionBoundSession& operator=(const ConnectionBoundSession&) = delete;
++    ConnectionBoundSession& operator=(ConnectionBoundSession&&) = delete;
++
++    std::shared_ptr<UserSession> session;
++};
++
++// Returns a pointer to the same UserSession that additionally shares
++// ownership of a ConnectionBoundSession.  Every copy made from the returned
++// pointer keeps the session in the store; when the last copy is released the
++// session is removed.  The SessionStore's own reference does not count.
++inline std::shared_ptr<UserSession> bindSessionToConnection(
++    const std::shared_ptr<UserSession>& session)
++{
++    if (session == nullptr)
++    {
++        return nullptr;
++    }
++    auto owner = std::make_shared<ConnectionBoundSession>(session);
++    return {owner, session.get()};
++}
++
+ } // namespace persistent_data
+-- 
+2.43.0
+
