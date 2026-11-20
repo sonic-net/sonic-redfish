@@ -206,6 +206,13 @@ then waits `settle_seconds` more and fails if more than `max_matches` of all
 events received during the case match its validators, including events
 received before the expected one. A case may use `expect_no_event` alone.
 
+Checks that need more than one request and response are written in
+Python next to the runner:
+
+| File                                                                              | Scope                                                                                                                                             |
+|-----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
+| [framework/test_mtls_sessions.py](redfish-api/framework/test_mtls_sessions.py)    | An mTLS session is listed while its connection is open and leaves the session collection when it closes: client close, server close and HTTP/2   |
+
 > **Note:** Skipped modules use `"skip": true` or similar logic in the
 > framework if needed.
 
