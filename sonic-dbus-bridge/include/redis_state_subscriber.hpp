@@ -75,7 +75,20 @@ public:
     bool startMultiKey(const std::string& host, int port,
                        const std::vector<std::string>& keys,
                        KeyspaceCallback callback);
-    
+
+    /**
+     * @brief Set a callback run once on the subscriber thread after the
+     *        subscriptions are active and before the first notification
+     *        is handled
+     *
+     * Lets the owner re-read state that may have been written between its
+     * startup read and the subscription. Must be set before start.
+     */
+    void setSubscribedCallback(std::function<void()> callback)
+    {
+        subscribedCallback_ = std::move(callback);
+    }
+
     /**
      * @brief Stop subscriber thread
      */
@@ -92,7 +105,8 @@ private:
     std::thread subscriberThread_;
     std::atomic<bool> running_;
     KeyspaceCallback callback_;
-    
+    std::function<void()> subscribedCallback_;
+
     /**
      * @brief Subscriber thread main loop
      */

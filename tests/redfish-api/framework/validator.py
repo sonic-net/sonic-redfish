@@ -32,10 +32,12 @@ ALLOWED_REDIS_ACTIONS = {"delete"}
 ALLOWED_FIELD_TYPES = {"string", "int", "float", "bool"}
 
 EVENT_FLOW_ALLOWED_KEYS = {
-    "name", "description", "type", "subscribe", "trigger", "expect_event", "teardown",
-}
-EVENT_FLOW_REQUIRED_KEYS = {
     "name", "description", "type", "subscribe", "trigger", "expect_event",
+    "expect_no_event", "teardown",
+}
+# Plus at least one of expect_event / expect_no_event.
+EVENT_FLOW_REQUIRED_KEYS = {
+    "name", "description", "type", "subscribe", "trigger",
 }
 
 
@@ -69,11 +71,20 @@ def _validate_event_flow_case(name: str, case: dict) -> list[str]:
             elif "run" not in step and "wait_seconds" not in step:
                 errors.append(f"Case '{name}', trigger[{s_idx}]: needs 'run' or 'wait_seconds'.")
 
-    ee = case.get("expect_event")
-    if not isinstance(ee, dict):
-        errors.append(f"Case '{name}': 'expect_event' must be an object.")
-    elif not isinstance(ee.get("validators"), list) or not ee.get("validators"):
-        errors.append(f"Case '{name}': 'expect_event.validators' must be a non-empty array.")
+    if "expect_event" not in case and "expect_no_event" not in case:
+        errors.append(f"Case '{name}': needs 'expect_event' or 'expect_no_event'.")
+    for key in ("expect_event", "expect_no_event"):
+        if key not in case:
+            continue
+        ee = case[key]
+        if not isinstance(ee, dict):
+            errors.append(f"Case '{name}': '{key}' must be an object.")
+        elif not isinstance(ee.get("validators"), list) or not ee.get("validators"):
+            errors.append(f"Case '{name}': '{key}.validators' must be a non-empty array.")
+    ne = case.get("expect_no_event")
+    if isinstance(ne, dict) and "max_matches" in ne and (
+            not isinstance(ne["max_matches"], int) or ne["max_matches"] < 0):
+        errors.append(f"Case '{name}': 'expect_no_event.max_matches' must be a non-negative integer.")
 
     return errors
 

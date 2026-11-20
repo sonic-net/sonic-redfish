@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chinmoy Dey <chinmoy@nexthop.ai>
+Date: Thu, 29 Oct 2026 00:00:00 +0000
+Subject: [PATCH 9/9] Report an unknown Switch-Host power state until bmcctld
+ publishes it
+
+sonic-dbus-bridge seeds CurrentHostState with a dedicated Unknown value
+when HOST_STATE|switch-host does not exist yet, and derives the chassis
+power state from it. Stock bmcweb folds any unrecognised host state into
+PowerState Off and ignores unrecognised chassis states, so a powered-on
+Switch-Host could be reported as Off while bmcctld is still starting.
+
+  - systems.hpp: HostState.Unknown omits PowerState and reports
+    Status.State UnavailableOffline instead of Off / Disabled
+  - chassis.hpp: PowerState.Unknown omits PowerState and reports
+    Status.State UnavailableOffline instead of leaving Enabled
+
+The first HOST_STATE|switch-host row replaces the unknown value on the
+bridge and the host state monitor emits the matching ResourceEvent.
+---
+ redfish-core/lib/chassis.hpp |  8 ++++++++
+ redfish-core/lib/systems.hpp | 10 ++++++++++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/redfish-core/lib/chassis.hpp b/redfish-core/lib/chassis.hpp
+--- a/redfish-core/lib/chassis.hpp
++++ b/redfish-core/lib/chassis.hpp
+@@ -191,6 +191,15 @@
+                     resource::PowerState::Off;
+                 asyncResp->res.jsonValue["Status"]["State"] =
+                     resource::State::StandbyOffline;
++            }
++            else if (chassisState ==
++                     "xyz.openbmc_project.State.Chassis.PowerState.Unknown")
++            {
++                // sonic-dbus-bridge derives the chassis power state from
++                // the Switch-Host state and reports this until bmcctld has
++                // published HOST_STATE|switch-host: no PowerState claimed.
++                asyncResp->res.jsonValue["Status"]["State"] =
++                    resource::State::UnavailableOffline;
+             }
+         });
+ }
+diff --git a/redfish-core/lib/systems.hpp b/redfish-core/lib/systems.hpp
+--- a/redfish-core/lib/systems.hpp
++++ b/redfish-core/lib/systems.hpp
+@@ -516,6 +516,16 @@
+                     resource::PowerState::PoweringOff;
+                 asyncResp->res.jsonValue["Status"]["State"] =
+                     resource::State::Disabled;
++            }
++            else if (hostState ==
++                     "xyz.openbmc_project.State.Host.HostState.Unknown")
++            {
++                // sonic-dbus-bridge reports this until bmcctld has
++                // published HOST_STATE|switch-host. The Switch-Host may be
++                // on or off, so no PowerState is claimed rather than the
++                // stock fallback to Off.
++                asyncResp->res.jsonValue["Status"]["State"] =
++                    resource::State::UnavailableOffline;
+             }
+             else
+             {

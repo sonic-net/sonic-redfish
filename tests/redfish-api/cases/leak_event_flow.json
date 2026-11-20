@@ -4,7 +4,7 @@
     "description": "RMC subscribes for events; a critical leak is injected; RMC must receive LeakDetectedCritical.",
     "type": "event_flow",
     "subscribe": {
-      "description": "RMC registers a push (webhook) subscription. No RegistryPrefixes filter: bmcweb filters sendEvent()-generated leak events out of registry-filtered subscriptions, so the RMC subscribes broadly and matches the specific leak event by MessageId/Severity below.",
+      "description": "RMC registers an unfiltered push (webhook) subscription and matches the specific leak event by MessageId/Severity below.",
       "endpoint": "/redfish/v1/EventService/Subscriptions",
       "method": "POST",
       "expected_status": 201,
@@ -24,9 +24,69 @@
       "description": "Within 15s, an event for leak_sensor_1 (LeakDetectedCritical, severity Critical) must arrive. OriginOfCondition must point at the LeakDetector under the Chassis this BMC actually serves (/redfish/v1/Chassis/chassis).",
       "timeout_seconds": 15,
       "validators": [
-        {"type": "equals", "path": "Events[0].MessageId", "value": "Environmental.1.1.0.LeakDetectedCritical"},
-        {"type": "equals", "path": "Events[0].Severity", "value": "Critical"},
-        {"type": "equals", "path": "Events[0].OriginOfCondition.@odata.id", "value": "/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_1"}
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "Environmental.1.1.LeakDetectedCritical"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "Critical"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_1"
+        }
+      ]
+    },
+    "teardown": {
+      "description": "Restore leak_sensor_1 to OK so later tests start clean.",
+      "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+    }
+  },
+  {
+    "name": "leak_event_registry_prefix_filter",
+    "description": "A subscription filtered on RegistryPrefixes=[Environmental] receives leak events: the MessageId is in the four-field Registry.Major.Minor.Key form bmcweb matches a registry filter against.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers a push (webhook) subscription filtered on the Environmental registry.",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-LeakTest",
+        "RegistryPrefixes": ["Environmental"]
+      }
+    },
+    "trigger": [
+      {
+        "description": "Inject a critical leak: set leak_sensor_1 -> Critical in STATE_DB.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 Critical"
+      }
+    ],
+    "expect_event": {
+      "description": "Within 15s, an event for leak_sensor_1 (LeakDetectedCritical, severity Critical) must arrive. OriginOfCondition must point at the LeakDetector under the Chassis this BMC actually serves (/redfish/v1/Chassis/chassis).",
+      "timeout_seconds": 15,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "Environmental.1.1.LeakDetectedCritical"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "Critical"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_1"
+        }
       ]
     },
     "teardown": {
@@ -39,7 +99,7 @@
     "description": "After a leak, clearing it must produce a LeakDetectedNormal recovery event.",
     "type": "event_flow",
     "subscribe": {
-      "description": "RMC registers a push (webhook) subscription. No RegistryPrefixes filter: bmcweb filters sendEvent()-generated leak events out of registry-filtered subscriptions, so the RMC subscribes broadly and matches the specific leak event by MessageId/Severity below.",
+      "description": "RMC registers an unfiltered push (webhook) subscription and matches the specific leak event by MessageId/Severity below.",
       "endpoint": "/redfish/v1/EventService/Subscriptions",
       "method": "POST",
       "expected_status": 201,
@@ -67,8 +127,519 @@
       "description": "Within 15s, a LeakDetectedNormal event (severity OK) must arrive; the intermediate Critical event is skipped by the matcher.",
       "timeout_seconds": 15,
       "validators": [
-        {"type": "equals", "path": "Events[0].MessageId", "value": "Environmental.1.1.0.LeakDetectedNormal"},
-        {"type": "equals", "path": "Events[0].Severity", "value": "OK"}
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "Environmental.1.1.LeakDetectedNormal"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "OK"
+        }
+      ]
+    },
+    "teardown": {
+      "description": "Leave leak_sensor_1 at OK.",
+      "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+    }
+  },
+  {
+    "name": "leak_sensor_fault_event",
+    "description": "A faulted leak sensor must not look healthy: thermalctld reports it Fault/N-A, the detector becomes Unavailable with Status UnavailableOffline/Warning at both URIs, and the RMC receives ResourceStatusChangedWarning.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers an unfiltered push (webhook) subscription and matches the specific event by MessageId/Severity below.",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-LeakTest"
+      }
+    },
+    "trigger": [
+      {
+        "description": "thermalctld reports leak_sensor_1 faulted (leaking N/A, leak_sensor_status Fault).",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 Unavailable"
+      },
+      {
+        "description": "The deprecated LeakDetector URI the event points at reports Unavailable / UnavailableOffline / Warning.",
+        "run": "tests/redfish-api/framework/assert_get.py /redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_1 '[{\"type\":\"equals\",\"path\":\"DetectorState\",\"value\":\"Unavailable\"},{\"type\":\"equals\",\"path\":\"Status.State\",\"value\":\"UnavailableOffline\"},{\"type\":\"equals\",\"path\":\"Status.Health\",\"value\":\"Warning\"}]'"
+      },
+      {
+        "description": "The canonical LeakDetector URI reports the same.",
+        "run": "tests/redfish-api/framework/assert_get.py /redfish/v1/Chassis/chassis/LeakDetectors/leak_sensor_1 '[{\"type\":\"equals\",\"path\":\"DetectorState\",\"value\":\"Unavailable\"},{\"type\":\"equals\",\"path\":\"Status.State\",\"value\":\"UnavailableOffline\"},{\"type\":\"equals\",\"path\":\"Status.Health\",\"value\":\"Warning\"}]'"
+      }
+    ],
+    "expect_event": {
+      "description": "Within 15s a ResourceStatusChangedWarning event (severity Warning) must arrive with OriginOfCondition pointing at the LeakDetector.",
+      "timeout_seconds": 15,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "ResourceEvent.1.3.ResourceStatusChangedWarning"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "Warning"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].MessageArgs[0]",
+          "value": "leak_sensor_1"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].MessageArgs[1]",
+          "value": "Warning"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_1"
+        }
+      ]
+    },
+    "teardown": {
+      "description": "Leave leak_sensor_1 at OK.",
+      "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+    }
+  },
+  {
+    "name": "leak_sensor_fault_not_leaking_event",
+    "description": "A sensor reported Fault while its leak state still reads No cannot vouch for it: the detector becomes Unavailable with Status UnavailableOffline/Warning at both URIs, and the RMC receives ResourceStatusChangedWarning.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers an unfiltered push (webhook) subscription and matches the specific event by MessageId/Severity below.",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-LeakTest"
+      }
+    },
+    "trigger": [
+      {
+        "description": "leak_sensor_1 is reported faulted with leaking still No (leak_sensor_status Fault).",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 FaultNotLeaking"
+      },
+      {
+        "description": "The deprecated LeakDetector URI the event points at reports Unavailable / UnavailableOffline / Warning.",
+        "run": "tests/redfish-api/framework/assert_get.py /redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_1 '[{\"type\":\"equals\",\"path\":\"DetectorState\",\"value\":\"Unavailable\"},{\"type\":\"equals\",\"path\":\"Status.State\",\"value\":\"UnavailableOffline\"},{\"type\":\"equals\",\"path\":\"Status.Health\",\"value\":\"Warning\"}]'"
+      },
+      {
+        "description": "The canonical LeakDetector URI reports the same.",
+        "run": "tests/redfish-api/framework/assert_get.py /redfish/v1/Chassis/chassis/LeakDetectors/leak_sensor_1 '[{\"type\":\"equals\",\"path\":\"DetectorState\",\"value\":\"Unavailable\"},{\"type\":\"equals\",\"path\":\"Status.State\",\"value\":\"UnavailableOffline\"},{\"type\":\"equals\",\"path\":\"Status.Health\",\"value\":\"Warning\"}]'"
+      }
+    ],
+    "expect_event": {
+      "description": "Within 15s a ResourceStatusChangedWarning event (severity Warning) must arrive with OriginOfCondition pointing at the LeakDetector.",
+      "timeout_seconds": 15,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "ResourceEvent.1.3.ResourceStatusChangedWarning"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "Warning"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].MessageArgs[0]",
+          "value": "leak_sensor_1"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].MessageArgs[1]",
+          "value": "Warning"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_1"
+        }
+      ]
+    },
+    "teardown": {
+      "description": "Leave leak_sensor_1 at OK.",
+      "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+    }
+  },
+  {
+    "name": "leak_sensor_fault_recovery_event",
+    "description": "A sensor coming back from Fault must be reported healthy again: Status Enabled/OK and a ResourceStatusChangedOK event for the RMC.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers an unfiltered push (webhook) subscription and matches the specific event by MessageId/Severity below.",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-LeakTest"
+      }
+    },
+    "trigger": [
+      {
+        "description": "Fault the sensor first.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 Unavailable"
+      },
+      {
+        "description": "Let the fault event settle before recovering.",
+        "wait_seconds": 2
+      },
+      {
+        "description": "thermalctld reports the sensor Good and not leaking again.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+      },
+      {
+        "description": "The LeakDetector reports OK / Enabled / OK again.",
+        "run": "tests/redfish-api/framework/assert_get.py /redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_1 '[{\"type\":\"equals\",\"path\":\"DetectorState\",\"value\":\"OK\"},{\"type\":\"equals\",\"path\":\"Status.State\",\"value\":\"Enabled\"},{\"type\":\"equals\",\"path\":\"Status.Health\",\"value\":\"OK\"}]'"
+      }
+    ],
+    "expect_event": {
+      "description": "Within 15s a ResourceStatusChangedOK event (severity OK) must arrive for the LeakDetector; the earlier Warning event is skipped by the matcher.",
+      "timeout_seconds": 15,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "ResourceEvent.1.3.ResourceStatusChangedOK"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "OK"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].MessageArgs[0]",
+          "value": "leak_sensor_1"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].MessageArgs[1]",
+          "value": "OK"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_1"
+        }
+      ]
+    },
+    "teardown": {
+      "description": "Leave leak_sensor_1 at OK.",
+      "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+    }
+  },
+  {
+    "name": "leak_sensor_fault_recovery_reports_normal",
+    "description": "Recovering from Fault to not leaking also delivers LeakDetectedNormal, so a subscriber matching only on the Environmental leak messages learns the sensor is back.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers an unfiltered push (webhook) subscription and matches the specific event by MessageId/Severity below.",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-LeakTest"
+      }
+    },
+    "trigger": [
+      {
+        "description": "Fault the sensor first.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 Unavailable"
+      },
+      {
+        "description": "Let the fault event settle before recovering.",
+        "wait_seconds": 2
+      },
+      {
+        "description": "thermalctld reports the sensor Good and not leaking again.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+      }
+    ],
+    "expect_event": {
+      "description": "Within 15s a LeakDetectedNormal event (severity OK) must arrive for leak_sensor_1.",
+      "timeout_seconds": 15,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "Environmental.1.1.LeakDetectedNormal"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "OK"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_1"
+        }
+      ]
+    },
+    "teardown": {
+      "description": "Leave leak_sensor_1 at OK.",
+      "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+    }
+  },
+  {
+    "name": "leak_sensor_added_after_startup",
+    "description": "A LIQUID_COOLING_INFO row thermalctld writes after the bridge started (cold boot ordering) becomes a LeakDetector at both URIs without a bridge restart, and the state it first appears in reaches the RMC.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers an unfiltered push (webhook) subscription and matches the specific event by MessageId/Severity below.",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-LeakTest"
+      }
+    },
+    "trigger": [
+      {
+        "description": "thermalctld publishes a sensor that was not in STATE_DB when the bridge started, already leaking at CRITICAL.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_late Critical"
+      },
+      {
+        "description": "The canonical LeakDetectors collection lists the new sensor.",
+        "run": "tests/redfish-api/framework/assert_get.py /redfish/v1/Chassis/chassis/LeakDetectors '[{\"type\":\"contains_member\",\"path\":\"Members\",\"value\":\"/redfish/v1/Chassis/chassis/LeakDetectors/leak_sensor_late\"}]'"
+      },
+      {
+        "description": "The deprecated LeakDetectors collection lists it too.",
+        "run": "tests/redfish-api/framework/assert_get.py /redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors '[{\"type\":\"contains_member\",\"path\":\"Members\",\"value\":\"/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_late\"}]'"
+      },
+      {
+        "description": "The new LeakDetector reports the state it was published with.",
+        "run": "tests/redfish-api/framework/assert_get.py /redfish/v1/Chassis/chassis/LeakDetectors/leak_sensor_late '[{\"type\":\"equals\",\"path\":\"DetectorState\",\"value\":\"Critical\"},{\"type\":\"equals\",\"path\":\"Status.Health\",\"value\":\"Critical\"}]'"
+      }
+    ],
+    "expect_event": {
+      "description": "Within 15s a LeakDetectedCritical event must arrive for the new sensor, although its object was created with that state rather than changed to it.",
+      "timeout_seconds": 15,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "Environmental.1.1.LeakDetectedCritical"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "Critical"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_late"
+        }
+      ]
+    },
+    "expect_no_event": {
+      "description": "The first state of a sensor created after startup is announced exactly once",
+      "settle_seconds": 5,
+      "max_matches": 1,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "Environmental.1.1.LeakDetectedCritical"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].MessageArgs[0]",
+          "value": "leak_sensor_late"
+        }
+      ]
+    },
+    "teardown": {
+      "description": "Leave leak_sensor_late at OK. Its object stays on D-Bus: the bridge does not remove sensors at runtime.",
+      "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_late OK"
+    }
+  },
+  {
+    "name": "leak_sensor_added_after_startup_ok_is_silent",
+    "description": "A sensor published after the bridge started in the OK state is listed at once, but sends no LeakDetectedNormal: it never leaked, so there is nothing to report.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers a push (webhook) subscription with no filter.",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-LeakTest"
+      }
+    },
+    "trigger": [
+      {
+        "description": "thermalctld publishes a new sensor that is not leaking.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_late_ok OK"
+      },
+      {
+        "description": "The canonical LeakDetectors collection lists the new sensor.",
+        "run": "tests/redfish-api/framework/assert_get.py /redfish/v1/Chassis/chassis/LeakDetectors '[{\"type\":\"contains_member\",\"path\":\"Members\",\"value\":\"/redfish/v1/Chassis/chassis/LeakDetectors/leak_sensor_late_ok\"}]'"
+      }
+    ],
+    "expect_no_event": {
+      "description": "No event may be sent for a sensor first seen OK",
+      "settle_seconds": 5,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageArgs[0]",
+          "value": "leak_sensor_late_ok"
+        }
+      ]
+    },
+    "teardown": {
+      "description": "Leave leak_sensor_late_ok at OK.",
+      "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_late_ok OK"
+    }
+  },
+  {
+    "name": "leak_sensor_fault_recovery_to_critical",
+    "description": "A sensor that comes back from Fault already leaking at CRITICAL reports its health as Critical, never as OK.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers a push (webhook) subscription with no filter.",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-LeakTest"
+      }
+    },
+    "trigger": [
+      {
+        "description": "Fault the sensor first.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 Unavailable"
+      },
+      {
+        "description": "Let the fault event settle before recovering.",
+        "wait_seconds": 2
+      },
+      {
+        "description": "thermalctld reports the sensor readable again and leaking at CRITICAL.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 Critical"
+      }
+    ],
+    "expect_event": {
+      "description": "Within 15s a ResourceStatusChangedCritical event (severity Critical) must arrive for the LeakDetector.",
+      "timeout_seconds": 15,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "ResourceEvent.1.3.ResourceStatusChangedCritical"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].Severity",
+          "value": "Critical"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].MessageArgs[1]",
+          "value": "Critical"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].OriginOfCondition.@odata.id",
+          "value": "/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/leak_sensor_1"
+        }
+      ]
+    },
+    "expect_no_event": {
+      "description": "A sensor recovering into a critical leak must not be reported as healthy",
+      "settle_seconds": 5,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "ResourceEvent.1.3.ResourceStatusChangedOK"
+        }
+      ]
+    },
+    "teardown": {
+      "description": "Leave leak_sensor_1 at OK.",
+      "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 OK"
+    }
+  },
+  {
+    "name": "leak_sensor_fault_recovery_to_warning",
+    "description": "A sensor that comes back from Fault leaking at MINOR keeps Warning health, so only LeakDetectedWarning is sent and never ResourceStatusChangedOK.",
+    "type": "event_flow",
+    "subscribe": {
+      "description": "RMC registers a push (webhook) subscription with no filter.",
+      "endpoint": "/redfish/v1/EventService/Subscriptions",
+      "method": "POST",
+      "expected_status": 201,
+      "body": {
+        "Destination": "{{RMC.LISTENER_URL}}",
+        "Protocol": "Redfish",
+        "Context": "RMC-LeakTest"
+      }
+    },
+    "trigger": [
+      {
+        "description": "Fault the sensor first.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 Unavailable"
+      },
+      {
+        "description": "Let the fault event settle before recovering.",
+        "wait_seconds": 2
+      },
+      {
+        "description": "thermalctld reports the sensor readable again and leaking at MINOR.",
+        "run": "tests/redfish-api/framework/trigger_leak.py leak_sensor_1 Warning"
+      }
+    ],
+    "expect_event": {
+      "description": "Within 15s a LeakDetectedWarning event must arrive for leak_sensor_1.",
+      "timeout_seconds": 15,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "Environmental.1.1.LeakDetectedWarning"
+        },
+        {
+          "type": "equals",
+          "path": "Events[0].MessageArgs[0]",
+          "value": "leak_sensor_1"
+        }
+      ]
+    },
+    "expect_no_event": {
+      "description": "A sensor recovering into a warning leak must not be reported as healthy",
+      "settle_seconds": 5,
+      "validators": [
+        {
+          "type": "equals",
+          "path": "Events[0].MessageId",
+          "value": "ResourceEvent.1.3.ResourceStatusChangedOK"
+        }
       ]
     },
     "teardown": {

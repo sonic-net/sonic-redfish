@@ -13,6 +13,11 @@ import json
 import os
 import re
 
+# bmcweb endpoint and the identity the tests authenticate as. Shared by the
+# pytest fixtures and the standalone event_flow step scripts.
+BMCWEB_BASE = "https://localhost:443"
+AUTH = ("bmcweb", "bmcweb")
+
 SCHEMA_DIR = os.environ.get(
     "REDFISH_SCHEMA_DIR", "/usr/share/www/redfish/v1/JsonSchemas")
 
