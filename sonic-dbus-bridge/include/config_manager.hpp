@@ -55,11 +55,11 @@ class ConfigManager
 
   private:
     // Redis
-    std::string configDbHost_{"127.0.0.1"};  // Use IP instead of localhost for reliability
+    std::string configDbHost_{}; // Empty selects the configured local socket.
     int configDbPort_{6379};
     int configDbIndex_{4};
 
-    std::string stateDbHost_{"127.0.0.1"};  // Use IP instead of localhost for reliability
+    std::string stateDbHost_{}; // Explicit nonempty hosts retain TCP.
     int stateDbPort_{6379};
     int stateDbIndex_{6};
 
