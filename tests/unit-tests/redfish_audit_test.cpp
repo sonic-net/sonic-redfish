@@ -256,3 +256,40 @@ TEST(Sink, FullSocketBufferDropsInsteadOfBlocking)
     EXPECT_TRUE(sawDrop);
     EXPECT_GT(sink.dropped(), 0U);
 }
+
+TEST(EventRecord, CarriesMessageResourceSeverityAndSubscribers)
+{
+    Record r = buildEventRecord("Environmental.1.1.0.LeakDetectedCritical",
+                                "leak_sensor_1", "Critical", 2);
+    std::string line = buildRecord(r, 1, std::chrono::system_clock::now());
+    EXPECT_NE(line.find("\"ev\":\"event\""), std::string::npos);
+    EXPECT_NE(line.find("\"msg\":\"Environmental.1.1.0.LeakDetectedCritical\""),
+              std::string::npos);
+    EXPECT_NE(line.find("\"detail\":{\"resource\":\"leak_sensor_1\","
+                        "\"Severity\":\"Critical\",\"subscribers\":2}"),
+              std::string::npos);
+}
+
+TEST(EventRecord, SyslogSeverityFollowsEventSeverity)
+{
+    EXPECT_EQ(buildEventRecord("m", "r", "Critical", 0).severity, 2);
+    EXPECT_EQ(buildEventRecord("m", "r", "Warning", 0).severity, 4);
+    EXPECT_EQ(buildEventRecord("m", "r", "OK", 0).severity, 5);
+}
+
+TEST(EventRecord, UnsafeNamesAreNotCopied)
+{
+    Record r = buildEventRecord("m", "bad\"name\n", "Critical", 0);
+    EXPECT_NE(r.detail.find("\"resource\":\"<invalid>\""), std::string::npos);
+    EXPECT_EQ(r.detail.find('\n'), std::string::npos);
+}
+
+TEST(Sink, CriticalEventIsSentAtCritSeverity)
+{
+    std::string path = socketPath("event");
+    Listener listener(path);
+    Sink sink(path);
+    EXPECT_TRUE(sink.write(buildEventRecord("m", "r", "Critical", 0)));
+    // authpriv (10 << 3) | crit (2)
+    EXPECT_EQ(listener.receive().rfind("<82>", 0), 0U);
+}

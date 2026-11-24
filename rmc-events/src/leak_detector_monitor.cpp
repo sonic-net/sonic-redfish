@@ -22,6 +22,7 @@
 #include "event_service_manager.hpp"
 #include "leak_detection.hpp"
 #include "logging.hpp"
+#include "redfish_audit_hook.hpp"
 
 #include <sdbusplus/bus/match.hpp>
 #include <sdbusplus/message.hpp>
@@ -148,8 +149,13 @@ static void onLeakDetectorPropertiesChanged(sdbusplus::message_t& msg)
     BMCWEB_LOG_INFO("Sending leak event: {} for sensor {}", messageId,
                     sensorName);
 
-    EventServiceManager::getInstance().sendEvent(
-        std::move(eventMessage), std::string_view(), "LeakDetector");
+    // A leak must be on record whatever the log level and whoever listens.
+    EventServiceManager& events = EventServiceManager::getInstance();
+    redfish_audit::recordEvent(messageId, sensorName, severity,
+                               events.getNumberOfSubscriptions());
+
+    events.sendEvent(std::move(eventMessage), std::string_view(),
+                     "LeakDetector");
 }
 
 const std::string leakDetectorMatchStr =

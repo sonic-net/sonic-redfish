@@ -346,6 +346,7 @@ redfish-audit[41]: {"v":1,"ts":"2026-11-16T17:01:21.866Z","seq":2,"src":"bmcweb"
 | `denied` | A request is answered with 401 or 403 |
 | `login`, `login_failed`, `logout` | A session is created, refused or deleted |
 | `telemetry_summary` | At most once a minute: accepted and rejected `SubmitTelemetry` calls |
+| `event` | The BMC raises a Redfish event of its own: a leak detector changes state, or the host power state changes. `msg` is the MessageId; `detail` has the `resource`, the `Severity` and the number of `subscribers` |
 | `start` | bmcweb starts |
 | `gap` | Records were lost (syslog unavailable); `detail.lost` is the count |
 
@@ -369,6 +370,17 @@ Accepted values are `DEBUG`, `INFO`, `NOTICE`, `WARN`, `ERROR` and `CRIT`, in
 either case; an unknown value is ignored and the level stays as it was. The bridge is notified by Redis when the entry
 changes, so a change applies at once and needs no restart. It lasts across restarts of the service, and across a
 reboot only after `config save`.
+
+Audit records of changes, refusals and events do not depend on the level:
+they are written at every level. An `event` record for a critical leak uses
+syslog severity `crit`, one for a warning `warning`.
+
+bmcweb's own log is built at `warning` (`-Dbmcweb-logging=warning` in
+`debian/rules`) and follows the same setting: `DEBUG` turns on its debug log,
+`ERROR` and `CRIT` lower it, and any other value leaves it at `warning`,
+because bmcweb's info level logs every request. The bridge logs a leak sensor
+state change at `CRIT` (critical leak), `WARN` (any other unhealthy state) or
+`NOTICE` (back to OK).
 
 At `DEBUG` the bridge also logs each Redis read, and bmcweb writes a `read`
 audit record for every GET and HEAD. bmcweb has no database access: it follows

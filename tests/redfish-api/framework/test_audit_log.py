@@ -24,6 +24,9 @@ import time
 import redis
 import requests
 
+from trigger_host_state import set_host_state
+from trigger_leak import set_leak_state
+
 BMCWEB_BASE = "https://localhost:443"
 AUTH = ("bmcweb", "bmcweb")
 TIMEOUT = 10
@@ -67,22 +70,42 @@ def mark():
         count = later
 
 
-def added_lines(since, wait=3.0):
-    """Audit lines written after mark(), waiting briefly for delivery. The
-    once-a-minute telemetry summary is not tied to a request and is skipped."""
+# Records that no request causes: the once-a-minute telemetry summary, and
+# the events the BMC raises itself (a power action is followed by host power
+# events).
+UNSOLICITED = ('"ev":"telemetry_summary"', '"ev":"event"')
+
+
+def added_lines(since, wait=3.0, skip=UNSOLICITED):
+    """Audit lines written after mark(), waiting briefly for delivery.
+    Records not tied to a request are skipped."""
+    def read():
+        return [line for line in audit_lines()[since:]
+                if not any(s in line for s in skip)]
+
     deadline = time.time() + wait
     while True:
-        found = [line for line in audit_lines()[since:]
-                 if '"ev":"telemetry_summary"' not in line]
+        found = read()
         if found:
             # Read once more, so a second record that follows the first (a
             # forged line, say) is seen and not missed by returning early.
             time.sleep(SETTLE)
-            return [line for line in audit_lines()[since:]
-                    if '"ev":"telemetry_summary"' not in line]
+            return read()
         if time.time() >= deadline:
             return found
         time.sleep(0.1)
+
+
+def added_events(since, message_id, wait=15.0):
+    """Event records with this MessageId written after mark()."""
+    deadline = time.time() + wait
+    while True:
+        found = [json.loads(line.split("]: ", 1)[1])
+                 for line in audit_lines()[since:] if '"ev":"event"' in line]
+        found = [rec for rec in found if rec["msg"] == message_id]
+        if found or time.time() >= deadline:
+            return found
+        time.sleep(0.2)
 
 
 def added_line(since):
@@ -355,6 +378,45 @@ def test_submit_alert_records_names_and_severity_only(redfish):
         {"name": "LiquidPressureDeviation", "Severity": "Major"}]
     assert rec["detail"]["bytes"] > 0
     assert "68123" not in added_line(before)
+
+
+def state_db():
+    return redis.StrictRedis(host="localhost", port=6379, db=6,
+                             decode_responses=True)
+
+
+def test_leak_is_recorded_without_any_subscriber():
+    """A leak is not a request: it must still be on record, at the default
+    log level and with nobody subscribed."""
+    db = state_db()
+    before = mark()
+    set_leak_state(db, "leak_sensor_1", "Critical")
+    try:
+        events = added_events(
+            before, "Environmental.1.1.0.LeakDetectedCritical")
+        assert len(events) == 1, events
+        assert events[0]["src"] == "bmcweb"
+        assert events[0]["detail"]["resource"] == "leak_sensor_1"
+        assert events[0]["detail"]["Severity"] == "Critical"
+        assert events[0]["detail"]["subscribers"] >= 0
+    finally:
+        before = mark()
+        set_leak_state(db, "leak_sensor_1", "OK")
+        assert added_events(before, "Environmental.1.1.0.LeakDetectedNormal")
+
+
+def test_host_power_change_is_recorded():
+    db = state_db()
+    before = mark()
+    set_host_state(db, "Off")
+    try:
+        events = added_events(before, "ResourceEvent.1.3.0.ResourcePoweredOff")
+        assert len(events) == 1, events
+        assert events[0]["detail"]["resource"] == "system"
+    finally:
+        before = mark()
+        set_host_state(db, "On")
+        assert added_events(before, "ResourceEvent.1.3.0.ResourcePoweredOn")
 
 
 def test_unrouted_path_is_not_copied_into_the_log(redfish):

@@ -15,7 +15,11 @@
 //
 // Read requests (GET, HEAD) are recorded only while the bridge's LogLevel
 // D-Bus property is DEBUG; otherwise they cost one flag test. The bridge takes
-// that level from CONFIG_DB (LOGGER|sonic-dbus-bridge).
+// that level from CONFIG_DB (LOGGER|sonic-dbus-bridge). bmcweb's own log
+// level follows the same property.
+//
+// Events the BMC raises itself (leak, host power) are recorded by
+// recordEvent(), at every log level.
 //
 // Only values named here are ever logged. Request bodies, credentials,
 // tokens, certificates and network addresses are not; a route that is not
@@ -27,6 +31,7 @@
 #include "dbus_singleton.hpp"
 #include "http_request.hpp"
 #include "http_response.hpp"
+#include "logging.hpp"
 #include "redfish_audit.hpp"
 #include "sessions.hpp"
 
@@ -95,15 +100,40 @@ inline RateLimiter& readLimiter()
     return instance;
 }
 
-inline void applyLogLevel(std::string_view level)
+// bmcweb's own log level for a bridge level name. bmcweb logs every request
+// at its info level, so only DEBUG raises it above the built-in level; ERROR
+// and CRIT lower it. Any other name, or none, means the built-in level.
+inline crow::LogLevel bmcwebLogLevel(std::string_view level,
+                                     crow::LogLevel builtIn)
 {
-    readsRecorded() = (level == "DEBUG");
+    if (level == "DEBUG")
+    {
+        return crow::LogLevel::Debug;
+    }
+    if (level == "ERROR")
+    {
+        return crow::LogLevel::Error;
+    }
+    if (level == "CRIT")
+    {
+        return crow::LogLevel::Critical;
+    }
+    return builtIn;
 }
 
-// Off until the bridge answers, so a missing bridge means the default.
+inline void applyLogLevel(std::string_view level)
+{
+    // Read before the first change, so it is the level bmcweb was built with.
+    static const crow::LogLevel builtIn = crow::getBmcwebCurrentLoggingLevel();
+    readsRecorded() = (level == "DEBUG");
+    crow::getBmcwebCurrentLoggingLevel() = bmcwebLogLevel(level, builtIn);
+}
+
+// Back to the defaults until the bridge answers, so a missing bridge means
+// the default.
 inline void fetchLogLevel()
 {
-    readsRecorded() = false;
+    applyLogLevel({});
     if (crow::connections::systemBus == nullptr)
     {
         return;
@@ -660,6 +690,14 @@ inline void recordUnauthenticated(const crow::Request& req,
         record.detail = "{\"suppressed\":" + std::to_string(suppressed) + "}";
     }
     sink().write(record);
+}
+
+// Called when the BMC raises a Redfish event of its own. subscribers is the
+// number of event subscriptions at that moment.
+inline void recordEvent(std::string_view messageId, std::string_view resource,
+                        std::string_view severity, size_t subscribers)
+{
+    sink().write(buildEventRecord(messageId, resource, severity, subscribers));
 }
 
 inline void watchLogLevel();

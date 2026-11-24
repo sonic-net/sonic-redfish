@@ -269,10 +269,30 @@ void UpdateEngine::onRedisFieldChange(const std::string& key,
                 auto it = cachedLeakStates_.find(sensorName);
                 if (it == cachedLeakStates_.end() || it->second != newState)
                 {
-                    LOG_INFO("[UpdateEngine] Leak sensor %s state: %s -> %s",
-                             sensorName.c_str(),
-                             it != cachedLeakStates_.end() ? it->second.c_str() : "(none)",
-                             newState.c_str());
+                    // Logged above the default level, so a leak is not
+                    // lost when the level is raised: a critical leak at
+                    // CRIT, any other state than a healthy OK at WARNING.
+                    const char* oldState = it != cachedLeakStates_.end()
+                                               ? it->second.c_str()
+                                               : "(none)";
+                    if (newState.starts_with("Critical"))
+                    {
+                        LOG_CRIT("[UpdateEngine] Leak sensor %s state: %s -> %s",
+                                 sensorName.c_str(), oldState,
+                                 newState.c_str());
+                    }
+                    else if (newState != "OK")
+                    {
+                        LOG_WARNING("[UpdateEngine] Leak sensor %s state: %s -> %s",
+                                    sensorName.c_str(), oldState,
+                                    newState.c_str());
+                    }
+                    else
+                    {
+                        LOG_NOTICE("[UpdateEngine] Leak sensor %s state: %s -> %s",
+                                   sensorName.c_str(), oldState,
+                                   newState.c_str());
+                    }
 
                     cachedLeakStates_[sensorName] = newState;
                     dbusExporter_->updateLeakSensorState(*sensor);

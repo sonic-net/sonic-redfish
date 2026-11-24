@@ -25,6 +25,7 @@
 #include "dbus_utility.hpp"
 #include "event_service_manager.hpp"
 #include "logging.hpp"
+#include "redfish_audit_hook.hpp"
 
 #include <sdbusplus/bus/match.hpp>
 #include <sdbusplus/message.hpp>
@@ -141,8 +142,13 @@ static void onHostStatePropertiesChanged(sdbusplus::message_t& msg)
 
     BMCWEB_LOG_INFO("Sending host power event: {} ({})", messageId, *newState);
 
-    EventServiceManager::getInstance().sendEvent(
-        std::move(eventMessage), std::string_view(), "ComputerSystem");
+    // A power change must be on record whatever the log level.
+    EventServiceManager& events = EventServiceManager::getInstance();
+    redfish_audit::recordEvent(messageId, resourceName, "OK",
+                               events.getNumberOfSubscriptions());
+
+    events.sendEvent(std::move(eventMessage), std::string_view(),
+                     "ComputerSystem");
 }
 
 const std::string hostStateMatchStr =

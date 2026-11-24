@@ -319,6 +319,39 @@ inline std::string buildRecord(const Record& r, uint64_t seq,
     return out;
 }
 
+// syslog severity for a Redfish event severity: a critical condition must
+// stand out from the records of ordinary requests.
+inline int eventSyslogSeverity(std::string_view severity)
+{
+    if (severity == "Critical")
+    {
+        return 2;
+    }
+    if (severity == "Warning")
+    {
+        return 4;
+    }
+    return 5;
+}
+
+// The record of a Redfish event raised by the BMC itself (a leak, a host
+// power change). No request causes these, so nothing else records them.
+// Written at every log level.
+inline Record buildEventRecord(std::string_view messageId,
+                               std::string_view resource,
+                               std::string_view severity, size_t subscribers)
+{
+    Record record;
+    record.ev = "event";
+    record.msg = safeToken(messageId);
+    // Checked tokens need no escaping.
+    record.detail = "{\"resource\":\"" + safeToken(resource) +
+                    "\",\"Severity\":\"" + safeToken(severity) +
+                    "\",\"subscribers\":" + std::to_string(subscribers) + "}";
+    record.severity = eventSyslogSeverity(severity);
+    return record;
+}
+
 // Sends records to the local syslog socket without ever blocking the caller.
 // A record that cannot be sent is counted; the next successful send is
 // preceded by a "gap" record carrying the count. Sequence numbers advance
