@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chinmoy Dey <chinmoy@nexthop.ai>
 Date: Mon, 16 Nov 2026 00:00:00 +0000
-Subject: [PATCH 11/11] Record an audit trail of Redfish requests
+Subject: [PATCH 12/12] Record an audit trail of Redfish requests
 
 Nothing recorded who changed what through Redfish: a successful reset,
 alert submission or subscription left no trace at the default log

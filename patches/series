@@ -15,4 +15,4 @@
 0007-Advertise-canonical-Chassis-LeakDetectors-collection.patch
 0008-Switch-Host-power-events-and-supported-ResetTypes.patch
 0010-Remove-mTLS-session-when-its-connection-is-destroyed.patch
-0011-Record-an-audit-trail-of-Redfish-requests.patch
+0012-Record-an-audit-trail-of-Redfish-requests.patch

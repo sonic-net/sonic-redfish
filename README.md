@@ -229,7 +229,7 @@ Current patches:
    MutualTLS session together with its connection, closes idle HTTP/1
    keep-alive and HTTP/2 connections, and enables TCP keepalive on event
    streams
-11. `0011-Record-an-audit-trail-of-Redfish-requests.patch` - Calls the audit
+12. `0012-Record-an-audit-trail-of-Redfish-requests.patch` - Calls the audit
    hook from the router and connection code (section 7.3)
 
 To add a new patch:
