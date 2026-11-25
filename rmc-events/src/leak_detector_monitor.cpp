@@ -11,7 +11,11 @@
 // D-Bus signal watcher for leak detector PropertiesChanged events.
 // Converts state changes on xyz.openbmc_project.Inventory.Item.LeakDetector
 // objects into Redfish events using the Environmental message registry
-// (LeakDetectedCritical, LeakDetectedWarning, LeakDetectedNormal).
+// (LeakDetectedCritical, LeakDetectedWarning, LeakDetectedNormal). A
+// detector that becomes Unavailable (the sensor faulted or unreadable) is
+// reported with ResourceEvent ResourceStatusChangedWarning, and with the
+// ResourceStatusChanged message for the health it comes back with (OK or
+// Critical) when it is readable again.
 //
 // Events are delivered to subscribers via EventServiceManager::sendEvent().
 
@@ -28,11 +32,63 @@
 #include <sdbusplus/message/native_types.hpp>
 
 #include <algorithm>
+#include <map>
 #include <string>
 #include <variant>
 
 namespace redfish
 {
+
+// Last DetectorState seen per detector object path, so that leaving
+// Unavailable can be told apart from an ordinary leak clearing. Starts empty
+// after a bmcweb restart: the first change seen is then treated as an
+// ordinary transition, and the Rack Manager is expected to re-read the
+// LeakDetectors after any restart anyway.
+static std::map<std::string, std::string>& lastDetectorStates()
+{
+    static std::map<std::string, std::string> states;
+    return states;
+}
+
+static std::string leakDetectorOriginUri(const std::string& sensorName)
+{
+    // The chassis id must match the Chassis resource bmcweb serves for the
+    // bridge's /xyz/openbmc_project/inventory/system/chassis object,
+    // otherwise subscribers receive a URI this BMC does not serve.
+    return "/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/" +
+           sensorName;
+}
+
+// ResourceEvent.1.3.ResourceStatusChanged{OK,Warning,Critical} for a
+// detector entering or leaving Unavailable. health is the Redfish
+// Status.Health the detector now reports. Message text follows the registry
+// entry, which quotes the resource differently for OK.
+static void sendDetectorStatusChanged(const std::string& sensorName,
+                                      const std::string& health)
+{
+    nlohmann::json::object_t eventMessage;
+    eventMessage["MessageId"] =
+        "ResourceEvent.1.3.ResourceStatusChanged" + health;
+    eventMessage["MessageArgs"] =
+        nlohmann::json::array_t{sensorName, health};
+    eventMessage["Severity"] = health;
+    eventMessage["MessageSeverity"] = health;
+    eventMessage["Message"] =
+        health == "OK"
+            ? "The health of resource '" + sensorName + "' has changed to OK."
+            : "The health of resource `" + sensorName + "` has changed to " +
+                  health + ".";
+
+    nlohmann::json::object_t originObj;
+    originObj["@odata.id"] = leakDetectorOriginUri(sensorName);
+    eventMessage["OriginOfCondition"] = std::move(originObj);
+
+    BMCWEB_LOG_INFO("Sending leak detector status event: {} for sensor {}",
+                    eventMessage["MessageId"].get<std::string>(), sensorName);
+
+    EventServiceManager::getInstance().sendEvent(
+        std::move(eventMessage), std::string_view(), "LeakDetector");
+}
 
 // Map a fully-qualified DetectorState D-Bus enum value to an Environmental
 // registry MessageId, severity, and human-readable message.
@@ -47,7 +103,7 @@ static bool mapDetectorStateToEvent(const std::string& stateEnum,
 
     if (state == "Critical")
     {
-        messageId = "Environmental.1.1.0.LeakDetectedCritical";
+        messageId = "Environmental.1.1.LeakDetectedCritical";
         severity = "Critical";
         message = "Leak detector '" + sensorName +
                   "' reports a critical level leak.";
@@ -55,7 +111,7 @@ static bool mapDetectorStateToEvent(const std::string& stateEnum,
     }
     if (state == "Warning")
     {
-        messageId = "Environmental.1.1.0.LeakDetectedWarning";
+        messageId = "Environmental.1.1.LeakDetectedWarning";
         severity = "Warning";
         message = "Leak detector '" + sensorName +
                   "' reports a warning level leak.";
@@ -63,7 +119,7 @@ static bool mapDetectorStateToEvent(const std::string& stateEnum,
     }
     if (state == "OK")
     {
-        messageId = "Environmental.1.1.0.LeakDetectedNormal";
+        messageId = "Environmental.1.1.LeakDetectedNormal";
         severity = "OK";
         message = "Leak detector '" + sensorName + "' has returned to normal.";
         return true;
@@ -105,6 +161,37 @@ static void onLeakDetectorPropertiesChanged(sdbusplus::message_t& msg)
         return;
     }
 
+    const std::string state = getDbusEnumSuffix(*newState);
+    std::string previous;
+    auto& states = lastDetectorStates();
+    if (auto it = states.find(objPath.str); it != states.end())
+    {
+        previous = it->second;
+    }
+    states[objPath.str] = state;
+
+    if (state == "Unavailable")
+    {
+        sendDetectorStatusChanged(sensorName, "Warning");
+        return;
+    }
+    if (previous == "Unavailable")
+    {
+        // Readable again: report the health it came back with, then the
+        // leak state (LeakDetectedNormal when not leaking) so a subscriber
+        // matching only on the leak messages learns it too. Unavailable is
+        // already reported as Warning, so returning to a Warning leak is
+        // not a health change.
+        if (state == "Critical")
+        {
+            sendDetectorStatusChanged(sensorName, "Critical");
+        }
+        else if (state == "OK")
+        {
+            sendDetectorStatusChanged(sensorName, "OK");
+        }
+    }
+
     std::string messageId;
     std::string severity;
     std::string message;
@@ -115,12 +202,7 @@ static void onLeakDetectorPropertiesChanged(sdbusplus::message_t& msg)
         return;
     }
 
-    // Build origin URI. The chassis id must match the Chassis resource bmcweb
-    // serves for the bridge's /xyz/openbmc_project/inventory/system/chassis
-    // object, otherwise subscribers receive a URI this BMC does not serve.
-    std::string originUri =
-        "/redfish/v1/Chassis/chassis/ThermalSubsystem/LeakDetection/LeakDetectors/" +
-        sensorName;
+    std::string originUri = leakDetectorOriginUri(sensorName);
 
     nlohmann::json::object_t eventMessage;
     eventMessage["MessageId"] = messageId;

@@ -12,9 +12,11 @@
 
 #include "types.hpp"
 #include <sdbusplus/asio/object_server.hpp>
+#include <functional>
 #include <memory>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace sonic::dbus_bridge
 {
@@ -31,6 +33,10 @@ namespace sonic::dbus_bridge
 class DBusExporter
 {
   public:
+    /// Registers an object created after startup with the ObjectMapper.
+    using ObjectRegistrar = std::function<void(
+        const std::string& path, const std::vector<std::string>& interfaces)>;
+
     /**
      * @brief Construct a new DBus Exporter
      *
@@ -74,6 +80,37 @@ class DBusExporter
      */
     bool updateLeakSensorState(const LeakSensorInfo& sensor);
 
+    /**
+     * @brief Set the callback that registers runtime-created objects
+     *
+     * Objects created at startup are registered by BridgeApp. Objects
+     * created later (leak sensors that appear after startup) are passed
+     * to this callback so bmcweb can discover them.
+     */
+    void setObjectRegistrar(ObjectRegistrar registrar)
+    {
+        objectRegistrar_ = std::move(registrar);
+    }
+
+    /**
+     * @brief Is there a D-Bus object for this leak sensor?
+     */
+    bool hasLeakSensor(const std::string& name) const;
+
+    /**
+     * @brief Create the D-Bus object for a leak sensor seen after startup
+     *
+     * thermalctld can publish LIQUID_COOLING_INFO|<name> after the bridge
+     * has read STATE_DB. Creates the object, adds it to the model,
+     * registers it through the ObjectRegistrar and, when the sensor is not
+     * OK, emits PropertiesChanged for DetectorState so bmcweb reports the
+     * state it was first seen in.
+     *
+     * @param sensor Leak sensor data from STATE_DB
+     * @return true if the object exists after the call
+     */
+    bool addLeakSensorObject(const LeakSensorInfo& sensor);
+
   private:
     sdbusplus::asio::object_server& inventoryServer_;
 
@@ -82,6 +119,8 @@ class DBusExporter
 
     // D-Bus interfaces (managed by shared_ptr, cleanup is automatic)
     std::map<std::string, std::shared_ptr<sdbusplus::asio::dbus_interface>> interfaces_;
+
+    ObjectRegistrar objectRegistrar_;
 
     /**
      * @brief Create chassis inventory object
@@ -119,6 +158,16 @@ class DBusExporter
      * emits PropertiesChanged signals for bmcweb event monitoring.
      */
     bool createLeakSensorObjects(const std::vector<LeakSensorInfo>& sensors);
+
+    /**
+     * @brief Create the D-Bus object for one leak sensor
+     *
+     * @param skipInitialSignals Do not emit PropertiesChanged for the new
+     *        properties (used for sensors created after startup)
+     * @return true on success
+     */
+    bool createLeakSensorObject(const LeakSensorInfo& sensor,
+                                bool skipInitialSignals = false);
 };
 
 } // namespace sonic::dbus_bridge

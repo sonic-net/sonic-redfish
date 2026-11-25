@@ -22,6 +22,7 @@ import requests
 # This absolute import from the 'data' package works because pytest.ini
 # configures testpaths='tests/redfish-api', adding it to sys.path during test runs.
 from data.redis_seed import seed
+from framework.utils import AUTH, BMCWEB_BASE
 
 # Suppress TLS warnings -- bmcweb uses a self-signed certificate in tests
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -30,8 +31,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Constants
 # ---------------------------------------------------------------------------
 
-BMCWEB_BASE = "https://localhost:443"
-AUTH = ("bmcweb", "bmcweb")
 TIMEOUT = 10  # seconds per request
 
 

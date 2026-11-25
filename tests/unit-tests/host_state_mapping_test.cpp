@@ -148,6 +148,74 @@ TEST(HostStateToChassisPowerState, Mapping)
 }
 
 // ---------------------------------------------------------------------------
+// Startup: HOST_STATE|switch-host absent or unreadable -> Unknown, never a guess
+// ---------------------------------------------------------------------------
+
+// The dedicated unknown values are outside the OpenBMC enums on purpose:
+// bmcweb must recognise them explicitly and must not fold them into Off.
+TEST(UnknownState, ValuesAreDistinctFromOpenBmcEnums)
+{
+    EXPECT_TRUE(HOST_STATE_UNKNOWN.starts_with(
+        "xyz.openbmc_project.State.Host.HostState."));
+    EXPECT_TRUE(CHASSIS_POWER_STATE_UNKNOWN.starts_with(
+        "xyz.openbmc_project.State.Chassis.PowerState."));
+    const std::set<std::string_view> hostEnums = {
+        HOST_STATE_OFF, HOST_STATE_RUNNING,
+        HOST_STATE_TRANSITIONING_TO_RUNNING, HOST_STATE_TRANSITIONING_TO_OFF};
+    EXPECT_FALSE(hostEnums.count(HOST_STATE_UNKNOWN));
+    const std::set<std::string_view> chassisEnums = {
+        CHASSIS_POWER_STATE_ON, CHASSIS_POWER_STATE_OFF,
+        CHASSIS_POWER_STATE_TRANSITIONING_TO_ON,
+        CHASSIS_POWER_STATE_TRANSITIONING_TO_OFF};
+    EXPECT_FALSE(chassisEnums.count(CHASSIS_POWER_STATE_UNKNOWN));
+}
+
+// No HOST_STATE|switch-host row yet (bmcctld has not published): Unknown,
+// whatever the caller passes for the fields.
+TEST(InitialHostState, AbsentRowIsUnknown)
+{
+    EXPECT_EQ(initialHostState(false, "", ""), HOST_STATE_UNKNOWN);
+    EXPECT_EQ(initialHostState(false, "POWERED_ON", "ONLINE"), HOST_STATE_UNKNOWN);
+}
+
+// A present, recognised row seeds the real state through the same table
+// that runtime updates use.
+TEST(InitialHostState, RecognisedRowMapsLikeRuntimeUpdates)
+{
+    EXPECT_EQ(initialHostState(true, "POWERED_ON", "ONLINE"), HOST_STATE_RUNNING);
+    EXPECT_EQ(initialHostState(true, "POWERED_OFF", "OFFLINE"), HOST_STATE_OFF);
+    EXPECT_EQ(initialHostState(true, "POWERING_OFF", "ONLINE"),
+              HOST_STATE_TRANSITIONING_TO_OFF);
+    EXPECT_EQ(initialHostState(true, "POWERED_ON", "OFFLINE"), HOST_STATE_OFF);
+    EXPECT_EQ(initialHostState(true, "", "ONLINE"), HOST_STATE_RUNNING);
+}
+
+// A present row that maps to nothing (empty or unrecognised fields, e.g. a
+// row bmcctld wrote with device_status N/A before it could read the module)
+// is also Unknown rather than a guess.
+TEST(InitialHostState, UnrecognisedRowIsUnknown)
+{
+    EXPECT_EQ(initialHostState(true, "", ""), HOST_STATE_UNKNOWN);
+    EXPECT_EQ(initialHostState(true, "WHATEVER", "N/A"), HOST_STATE_UNKNOWN);
+    EXPECT_EQ(initialHostState(true, "powered_on", "online"), HOST_STATE_UNKNOWN);
+}
+
+// Unknown host state must not be reported as a powered-off chassis.
+TEST(HostStateToChassisPowerState, UnknownStaysUnknown)
+{
+    EXPECT_EQ(hostStateToChassisPowerState(HOST_STATE_UNKNOWN),
+              CHASSIS_POWER_STATE_UNKNOWN);
+}
+
+TEST(UnknownState, Predicate)
+{
+    EXPECT_TRUE(isUnknownHostState(HOST_STATE_UNKNOWN));
+    EXPECT_FALSE(isUnknownHostState(HOST_STATE_OFF));
+    EXPECT_FALSE(isUnknownHostState(HOST_STATE_RUNNING));
+    EXPECT_FALSE(isUnknownHostState(""));
+}
+
+// ---------------------------------------------------------------------------
 // Redfish ResetType -> D-Bus transition -> RACK_MANAGER_COMMAND command
 // ---------------------------------------------------------------------------
 
