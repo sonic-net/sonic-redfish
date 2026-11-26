@@ -16,10 +16,16 @@ time, so the lines added after a request belong to it.
 """
 
 import base64
+import concurrent.futures
 import json
 import re
+import shutil
+import socket
+import ssl
 import subprocess
 import time
+
+import pytest
 
 import redis
 import requests
@@ -209,6 +215,43 @@ def test_get_is_recorded_only_at_debug_level(redfish):
     assert added_lines(before, wait=0.5) == []
 
 
+def test_reads_left_out_by_the_limit_are_counted():
+    """At most 50 read records a second are written. The reads left out must
+    be reported by a later read record, so every read is accounted for."""
+    sent = 400
+
+    def read_service_root(_):
+        # The service root needs no credentials, so each request is quick.
+        return requests.get(f"{BMCWEB_BASE}/redfish/v1", verify=False,
+                            timeout=TIMEOUT).status_code
+
+    config_db().hset(LOG_LEVEL_KEY, "LOGLEVEL", "DEBUG")
+    try:
+        assert wait_for_log_level("DEBUG")
+        time.sleep(0.5)
+        before = mark()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+            statuses = list(pool.map(read_service_root, range(sent)))
+        assert statuses == [200] * sent
+        # A new one-second window: this read is recorded, and carries
+        # whatever count is still outstanding.
+        time.sleep(1.5)
+        assert read_service_root(None) == 200
+        time.sleep(1.0)
+        reads = [json.loads(line.split("]: ", 1)[1])
+                 for line in added_lines(before)]
+    finally:
+        config_db().delete(LOG_LEVEL_KEY)
+    assert wait_for_log_level("INFO")
+
+    assert all(rec["ev"] == "read" for rec in reads), reads
+    left_out = sum(rec.get("detail", {}).get("suppressed", 0)
+                   for rec in reads)
+    assert left_out > 0, "the limit was never reached"
+    assert len(reads) + left_out == sent + 1
+    assert reads[-1]["uri"] == "/redfish/v1"
+
+
 def test_power_action_is_recorded(redfish):
     before = mark()
     resp = redfish.post(RESET_URI, json={"ResetType": "PowerCycle"})
@@ -264,6 +307,38 @@ def test_unauthenticated_request_is_denied_and_recorded():
     assert rec["method"] == "GET"
     assert rec["uri"] == "<unauthenticated>"
     assert "user" not in rec
+
+
+def test_oversized_body_without_session_is_denied_and_recorded():
+    """bmcweb answers 401 on the headers alone when a caller without a
+    session declares a body over 4096 bytes. The request never reaches the
+    router, and must still leave one record."""
+    request = (f"POST {RESET_URI}?secret-query HTTP/1.1\r\n"
+               "Host: localhost\r\n"
+               "Content-Type: application/json\r\n"
+               "Content-Length: 5000\r\n"
+               "\r\n").encode()
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+
+    before = mark()
+    with socket.create_connection(("localhost", 443), timeout=TIMEOUT) as raw:
+        with context.wrap_socket(raw, server_hostname="localhost") as tls:
+            # Headers only: the answer must not wait for the body.
+            tls.sendall(request)
+            status_line = tls.recv(4096).split(b"\r\n", 1)[0]
+    assert status_line.startswith(b"HTTP/1.1 401"), status_line
+
+    line = added_line(before)
+    rec = json.loads(line.split("]: ", 1)[1])
+    assert rec["ev"] == "denied"
+    assert rec["status"] == 401
+    assert rec["method"] == "POST"
+    assert rec["uri"] == "<unauthenticated>"
+    assert "user" not in rec
+    assert "detail" not in rec
+    assert "secret-query" not in line
 
 
 def test_wrong_password_is_denied_without_user_name():
@@ -326,6 +401,24 @@ def test_failed_session_login_is_recorded_without_user_name():
     assert rec["ev"] == "login_failed"
     assert "user" not in rec
     assert "typed-my-password-here" not in line
+
+
+def test_refused_account_creation_is_recorded_without_user_name(redfish):
+    """The body holds a password, so the account name is copied only when
+    the account was created, as for a session login."""
+    before = mark()
+    resp = redfish.post("/redfish/v1/AccountService/Accounts",
+                        json={"UserName": "typed-pw-as-account-name",
+                              "Password": "S3cret-Acct-Pw1",
+                              "RoleId": "NoSuchRole"})
+    assert resp.status_code == 400
+    line = added_line(before)
+    rec = json.loads(line.split("]: ", 1)[1])
+    assert rec["ev"] == "request"
+    assert rec["uri"] == "/redfish/v1/AccountService/Accounts"
+    assert rec["status"] == 400
+    assert "detail" not in rec
+    assert "typed-pw-as-account-name" not in line
 
 
 def test_patch_records_property_names_not_values(redfish):
@@ -430,6 +523,52 @@ def test_unrouted_path_is_not_copied_into_the_log(redfish):
     assert "xyzzy" not in added_line(before)
 
 
+H2_SECRETS = ("h2-secret-token-value", "h2-secret-cookie-value",
+              "H2-S3cret-Wrong-Pw")
+
+
+def test_http2_headers_are_not_logged_at_debug_level():
+    """bmcweb's debug log names each HTTP/2 header as it arrives. It must
+    not print the value: Authorization, X-Auth-Token and Cookie arrive that
+    way. test_no_secret_reaches_any_log looks for these values."""
+    if shutil.which("curl") is None:
+        pytest.skip("curl is not installed")
+    version = subprocess.run(["curl", "--version"], capture_output=True,
+                             text=True, check=True).stdout
+    if "HTTP2" not in version:
+        pytest.skip("curl was built without HTTP/2")
+
+    config_db().hset(LOG_LEVEL_KEY, "LOGLEVEL", "DEBUG")
+    try:
+        assert wait_for_log_level("DEBUG")
+        time.sleep(0.5)
+        result = subprocess.run(
+            ["curl", "--silent", "--insecure", "--http2",
+             "--max-time", str(TIMEOUT),
+             "--user", f"{AUTH[0]}:{H2_SECRETS[2]}",
+             "--header", f"X-Auth-Token: {H2_SECRETS[0]}",
+             "--header", f"Cookie: BMCWEB-SESSION={H2_SECRETS[1]}",
+             "--output", "/dev/null",
+             "--write-out", "%{http_code} %{http_version}",
+             f"{BMCWEB_BASE}/redfish/v1/Systems/system"],
+            capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.split() == ["401", "2"], result.stdout
+        time.sleep(0.5)
+    finally:
+        config_db().delete(LOG_LEVEL_KEY)
+    assert wait_for_log_level("INFO")
+
+    with open(BMCWEB_LOG, encoding="utf-8", errors="replace") as f:
+        service_text = f.read()
+    # The debug log was on and saw the headers of this request.
+    assert "on_header_callback name: authorization" in service_text
+    assert "on_header_callback name: x-auth-token" in service_text
+    basic = base64.b64encode(f"{AUTH[0]}:{H2_SECRETS[2]}".encode()).decode()
+    for secret in (*H2_SECRETS, basic):
+        assert secret not in service_text, f"{secret!r} found in bmcweb log"
+
+
 def test_sequence_numbers_have_no_gaps():
     seqs = [r["seq"] for r in audit_records() if r["src"] == "bmcweb"]
     assert seqs == list(range(1, len(seqs) + 1))
@@ -450,7 +589,9 @@ def test_no_secret_reaches_any_log():
 
     basic = base64.b64encode(f"{AUTH[0]}:{AUTH[1]}".encode()).decode()
     secrets = [token, basic, "S3cret-Wrong-Pw", "127.0.0.1", "192.0.2.77",
-               "secret-path", "ctx-secret-1", "typed-my-password-here"]
+               "secret-path", "ctx-secret-1", "typed-my-password-here",
+               "typed-pw-as-account-name", "S3cret-Acct-Pw1", "secret-query",
+               *H2_SECRETS]
     audit_text = "\n".join(audit_lines())
     with open(BMCWEB_LOG, encoding="utf-8", errors="replace") as f:
         service_text = f.read()

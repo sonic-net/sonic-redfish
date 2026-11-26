@@ -11,8 +11,11 @@ level, and the debug level printed credentials.
    refused request completes. The hook sits below route lookup, so all
    routes are covered.
  * http_connection.hpp, http2_connection.hpp: record requests refused
-   for missing or bad credentials, which never reach the router. Stop
-   logging the client address with each request.
+   for missing or bad credentials, which never reach the router,
+   including the HTTP/1 refusal of an oversized body from a caller
+   without a session, which is answered before the request is built.
+   Stop logging the client address with each request, and the value of
+   each HTTP/2 header.
  * authentication.hpp: stop logging the Authorization header, cookie
    values, the Basic user name and the client address.
  * webserver_run.cpp: record service start.
@@ -22,12 +25,12 @@ redfish_audit.hpp and redfish_audit_hook.hpp, which the build copies
 into include/ from redfish-audit/.
 
 ---
- http/http2_connection.hpp  |    2 ++
- http/http_connection.hpp   |    7 ++++---
+ http/http2_connection.hpp  |    5 +++--
+ http/http_connection.hpp   |   10 +++++++---
  http/routing.hpp           |    5 +++++
  include/authentication.hpp |   12 +++++-------
  src/webserver_run.cpp      |    3 +++
- 5 files changed, 19 insertions(+), 10 deletions(-)
+ 5 files changed, 23 insertions(+), 12 deletions(-)
 
 diff --git a/http/http2_connection.hpp b/http/http2_connection.hpp
 --- a/http/http2_connection.hpp
@@ -40,7 +43,7 @@ diff --git a/http/http2_connection.hpp b/http/http2_connection.hpp
  
  // NOLINTNEXTLINE(misc-include-cleaner)
  #include "nghttp2_adapters.hpp"
-@@ -332,6 +333,7 @@
+@@ -345,6 +346,7 @@
                      thisReq.url().encoded_path(),
                      thisReq.getHeaderValue("X-Requested-With"),
                      thisReq.getHeaderValue("Accept"), asyncResp->res);
@@ -48,6 +51,16 @@ diff --git a/http/http2_connection.hpp b/http/http2_connection.hpp
                  return 0;
              }
          }
+@@ -477,8 +479,7 @@
+         std::string_view valueSv(reinterpret_cast<const char*>(value.data()),
+                                  value.size());
+ 
+-        BMCWEB_LOG_DEBUG("on_header_callback name: {} value {}", nameSv,
+-                         valueSv);
++        BMCWEB_LOG_DEBUG("on_header_callback name: {}", nameSv);
+         if (frame.hd.type != NGHTTP2_HEADERS)
+         {
+             return 0;
 diff --git a/http/http_connection.hpp b/http/http_connection.hpp
 --- a/http/http_connection.hpp
 +++ b/http/http_connection.hpp
@@ -59,7 +72,7 @@ diff --git a/http/http_connection.hpp b/http/http_connection.hpp
  #include "mutual_tls.hpp"
  #include "sessions.hpp"
  #include "str_utility.hpp"
-@@ -402,10 +403,9 @@
+@@ -409,10 +410,9 @@
              }
          }
  
@@ -72,7 +85,7 @@ diff --git a/http/http_connection.hpp b/http/http_connection.hpp
  
          if (res.completed)
          {
-@@ -425,6 +425,7 @@
+@@ -432,6 +432,7 @@
                      req->url().encoded_path(),
                      req->getHeaderValue("X-Requested-With"),
                      req->getHeaderValue("Accept"), res);
@@ -80,6 +93,16 @@ diff --git a/http/http_connection.hpp b/http/http_connection.hpp
                  completeRequest(res);
                  return;
              }
+@@ -579,6 +580,9 @@
+                     " limit of {}. Setting unauthorized",
+                     logPtr(this), *contentLength, loggedOutPostBodyLimit);
+                 res.result(boost::beast::http::status::unauthorized);
++                // This refusal is answered from here, before handle().
++                redfish_audit::recordUnauthenticated(
++                    parser->get().method_string(), res.resultInt(), ip);
+             }
+             else
+             {
 diff --git a/http/routing.hpp b/http/routing.hpp
 --- a/http/routing.hpp
 +++ b/http/routing.hpp

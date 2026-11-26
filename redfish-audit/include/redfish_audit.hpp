@@ -142,6 +142,24 @@ class RateLimiter
     uint64_t suppressed = 0;
 };
 
+// detail with "suppressed":count added. detail is a JSON object as text, or
+// empty. A zero count leaves it unchanged.
+inline std::string withSuppressed(std::string detail, uint64_t count)
+{
+    if (count == 0)
+    {
+        return detail;
+    }
+    std::string field = "\"suppressed\":" + std::to_string(count);
+    if (detail.size() <= 2 || detail.front() != '{' || detail.back() != '}')
+    {
+        return "{" + field + "}";
+    }
+    detail.pop_back();
+    detail += "," + field + "}";
+    return detail;
+}
+
 // A request is recorded when it can change state, or when access was refused.
 inline bool isAuditable(std::string_view method, unsigned status)
 {

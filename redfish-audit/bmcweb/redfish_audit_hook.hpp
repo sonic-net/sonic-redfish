@@ -35,6 +35,7 @@
 #include "redfish_audit.hpp"
 #include "sessions.hpp"
 
+#include <boost/asio/ip/address.hpp>
 #include <boost/system/error_code.hpp>
 #include <nlohmann/json.hpp>
 #include <sdbusplus/asio/property.hpp>
@@ -164,6 +165,9 @@ struct Annotation
     std::string_view method;
     std::string_view ruleSuffix;
     std::span<const Field> fields;
+    // Copy the fields only when the request succeeded. For a body that also
+    // holds a password: a refused request may carry it in the wrong field.
+    bool successOnly = false;
 };
 
 inline constexpr std::array<std::string_view, 13> resetTypes{
@@ -190,7 +194,8 @@ inline constexpr std::array<Annotation, 7> annotations{
     Annotation{"POST", "/Actions/Chassis.Reset", resetFields},
     Annotation{"POST", "/Actions/Manager.ResetToDefaults",
                resetToDefaultsFields},
-    Annotation{"POST", "/redfish/v1/AccountService/Accounts", accountFields},
+    Annotation{"POST", "/redfish/v1/AccountService/Accounts", accountFields,
+               true},
     Annotation{"POST", "/redfish/v1/EventService/Subscriptions",
                subscriptionFields},
     Annotation{"POST", "/Actions/EventService.SubmitTestEvent",
@@ -361,6 +366,11 @@ inline std::string buildDetail(const crow::Request& req,
             {
                 continue;
             }
+            if (annotation.successOnly &&
+                (res.resultInt() < 200 || res.resultInt() >= 300))
+            {
+                break;
+            }
             nlohmann::json body = parseBody(req);
             if (body.is_discarded())
             {
@@ -453,18 +463,17 @@ inline std::string roleName(std::string_view privilege)
     return std::string(privilege);
 }
 
-inline void fillClient(const crow::Request& req, Record& record)
+inline void fillClient(const boost::asio::ip::address& address, Record& record)
 {
-    if (!req.ipAddress.is_unspecified())
+    if (!address.is_unspecified())
     {
-        record.client =
-            pseudonymizer().make('c', req.ipAddress.to_string());
+        record.client = pseudonymizer().make('c', address.to_string());
     }
 }
 
 inline void fillCaller(const crow::Request& req, Record& record)
 {
-    fillClient(req, record);
+    fillClient(req.ipAddress, record);
     if (req.session == nullptr)
     {
         return;
@@ -556,16 +565,14 @@ inline void recordCompleted(const crow::Request& req,
     }
 
     Record record;
+    // Reads left out by the limiter since the last read record. Added to
+    // detail at the end, after the route's own detail is built.
+    uint64_t suppressed = 0;
     if (!auditable)
     {
         record.ev = "read";
         record.severity = 6;
-        uint64_t suppressed = readLimiter().takeSuppressed();
-        if (suppressed != 0)
-        {
-            record.detail =
-                "{\"suppressed\":" + std::to_string(suppressed) + "}";
-        }
+        suppressed = readLimiter().takeSuppressed();
     }
     record.method = std::string(method);
     record.uri = rule.empty() ? std::string("<unmatched>")
@@ -627,6 +634,7 @@ inline void recordCompleted(const crow::Request& req,
             record.detail = buildDetail(req, res, method, rule);
         }
     }
+    record.detail = withSuppressed(std::move(record.detail), suppressed);
 
     sink().write(record);
 }
@@ -669,8 +677,10 @@ inline std::shared_ptr<RequestContext> attach(
 
 // Called when a request is refused for lack of valid credentials, which
 // happens before routing. The path is not logged: nothing has validated it.
-inline void recordUnauthenticated(const crow::Request& req,
-                                  crow::Response& res)
+// This form needs no Request: HTTP/1 can refuse a request on its headers
+// alone, before one is built.
+inline void recordUnauthenticated(std::string_view method, unsigned status,
+                                  const boost::asio::ip::address& address)
 {
     RateLimiter& limiter = detail::unauthenticatedLimiter();
     if (!limiter.allow(std::chrono::steady_clock::now()))
@@ -680,16 +690,18 @@ inline void recordUnauthenticated(const crow::Request& req,
 
     Record record;
     record.ev = "denied";
-    record.method = std::string(req.methodString());
+    record.method = std::string(method);
     record.uri = "<unauthenticated>";
-    record.status = res.resultInt();
-    detail::fillClient(req, record);
-    uint64_t suppressed = limiter.takeSuppressed();
-    if (suppressed != 0)
-    {
-        record.detail = "{\"suppressed\":" + std::to_string(suppressed) + "}";
-    }
+    record.status = status;
+    detail::fillClient(address, record);
+    record.detail = withSuppressed({}, limiter.takeSuppressed());
     sink().write(record);
+}
+
+inline void recordUnauthenticated(const crow::Request& req,
+                                  crow::Response& res)
+{
+    recordUnauthenticated(req.methodString(), res.resultInt(), req.ipAddress);
 }
 
 // Called when the BMC raises a Redfish event of its own. subscribers is the

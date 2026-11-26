@@ -335,6 +335,16 @@ answered with 401 or 403. Successful GETs are recorded only at log level
 `DEBUG` (see below). Each record
 carries a UTC timestamp (`ts`) and a sequence number (`seq`).
 
+Three kinds of request do not get a record of their own:
+
+- Accepted `SubmitTelemetry` calls are counted and reported once a minute
+  (`telemetry_summary`).
+- Requests refused before routing for missing or bad credentials are limited
+  to 20 records per second, and `read` records to 50 per second. The next
+  record of the same kind carries `detail.suppressed`, the number left out.
+- A request bmcweb rejects before routing as malformed or too large (400,
+  413, 431) is not recorded: nothing was authenticated, routed or changed.
+
 ```text
 redfish-audit[41]: {"v":1,"ts":"2026-11-16T17:01:21.866Z","seq":2,"src":"bmcweb","ev":"request","user":"bmcweb","role":"Administrator","auth":"basic","method":"POST","uri":"/redfish/v1/Systems/<str>/Actions/ComputerSystem.Reset","action":"ComputerSystem.Reset","detail":{"ResetType":"PowerCycle"},"status":204,"ms":1}
 ```
@@ -395,7 +405,10 @@ Request bodies, passwords, tokens, certificates and addresses are never
 logged. `uri` is the route pattern, not the path sent. `client` and `sess`
 are keyed hashes that stay stable until bmcweb restarts. A request field
 appears in `detail` only if `redfish_audit_hook.hpp` lists it for that route;
-to log a field of a new action, add it there. Sending never blocks a request:
+to log a field of a new action, add it there. The account name of a session
+login or a new account is copied only when the request succeeded, because a
+refused one may carry a password typed into the wrong field. bmcweb's own
+debug log names the HTTP/2 headers it receives without their values. Sending never blocks a request:
 if syslog cannot take a record it is dropped and counted.
 
 <sub>[^ Back to Table of Contents](#table-of-contents)</sub>

@@ -220,6 +220,42 @@ TEST(RateLimiter, LimitsPerSecondAndCountsTheRest)
     EXPECT_EQ(limiter.takeSuppressed(), 0U);
 }
 
+TEST(Suppressed, IsAddedToWhateverDetailTheRecordHas)
+{
+    // No count: the detail is left as it is.
+    EXPECT_EQ(withSuppressed("", 0), "");
+    EXPECT_EQ(withSuppressed("{\"id\":\"7\"}", 0), "{\"id\":\"7\"}");
+    // A record with no detail of its own, the usual case for a read.
+    EXPECT_EQ(withSuppressed("", 3), "{\"suppressed\":3}");
+    EXPECT_EQ(withSuppressed("{}", 3), "{\"suppressed\":3}");
+    // A record that has detail keeps it.
+    EXPECT_EQ(withSuppressed("{\"account\":\"alice\"}", 12),
+              "{\"account\":\"alice\",\"suppressed\":12}");
+}
+
+// The count taken from the limiter must reach the line that is sent.
+TEST(Suppressed, ReachesTheSerializedRecord)
+{
+    RateLimiter limiter(1);
+    std::chrono::steady_clock::time_point t0{std::chrono::seconds(100)};
+    EXPECT_TRUE(limiter.allow(t0));
+    EXPECT_FALSE(limiter.allow(t0 + std::chrono::milliseconds(1)));
+    EXPECT_FALSE(limiter.allow(t0 + std::chrono::milliseconds(2)));
+    EXPECT_TRUE(limiter.allow(t0 + std::chrono::seconds(1)));
+
+    Record r;
+    r.ev = "read";
+    r.method = "GET";
+    r.uri = "/redfish/v1/AccountService/Accounts/<str>";
+    r.status = 200;
+    r.detail = withSuppressed("{\"account\":\"alice\"}",
+                              limiter.takeSuppressed());
+    std::string line = buildRecord(r, 1, std::chrono::system_clock::now());
+    EXPECT_NE(line.find("\"detail\":{\"account\":\"alice\",\"suppressed\":2}"),
+              std::string::npos)
+        << line;
+}
+
 TEST(Sink, CountsDropsAndReportsGapOnRecovery)
 {
     std::string path = socketPath("gap");
