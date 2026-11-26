@@ -58,6 +58,16 @@ inline constexpr std::string_view CHASSIS_POWER_STATE_TRANSITIONING_TO_ON =
 inline constexpr std::string_view CHASSIS_POWER_STATE_TRANSITIONING_TO_OFF =
     "xyz.openbmc_project.State.Chassis.PowerState.TransitioningToOff";
 
+// Reported until bmcctld publishes HOST_STATE|switch-host. These are not
+// OpenBMC enum members: stock bmcweb folds any value it does not recognise
+// into Off, so the SONiC bmcweb patch handles them explicitly (PowerState
+// omitted, Status.State UnavailableOffline) and the event monitor ignores
+// them.
+inline constexpr std::string_view HOST_STATE_UNKNOWN =
+    "xyz.openbmc_project.State.Host.HostState.Unknown";
+inline constexpr std::string_view CHASSIS_POWER_STATE_UNKNOWN =
+    "xyz.openbmc_project.State.Chassis.PowerState.Unknown";
+
 // STATE_DB keys / fields written by bmcctld
 inline constexpr std::string_view KEY_HOST_STATE = "HOST_STATE|switch-host";
 inline constexpr std::string_view TABLE_RACK_MANAGER_COMMAND = "RACK_MANAGER_COMMAND";
@@ -186,6 +196,38 @@ inline constexpr std::optional<std::string_view>
     return hostStateFromDeviceStatus(deviceStatus);
 }
 
+inline constexpr bool isUnknownHostState(std::string_view hostState)
+{
+    return hostState == HOST_STATE_UNKNOWN;
+}
+
+/**
+ * @brief CurrentHostState to seed at startup from HOST_STATE|switch-host.
+ *
+ * bmcctld writes the row only after it has loaded the platform, so the
+ * bridge may start before it exists. A missing row, or one whose fields map
+ * to nothing, yields HOST_STATE_UNKNOWN rather than a guess: reporting a
+ * powered-off Switch-Host as On would let the Rack Manager act on it.
+ *
+ * @param rowPresent       HOST_STATE|switch-host exists in STATE_DB
+ * @param devicePowerState device_power_state field (ignored when absent)
+ * @param deviceStatus     device_status field (ignored when absent)
+ */
+inline constexpr std::string_view initialHostState(bool rowPresent,
+                                                   std::string_view devicePowerState,
+                                                   std::string_view deviceStatus)
+{
+    if (!rowPresent)
+    {
+        return HOST_STATE_UNKNOWN;
+    }
+    if (auto mapped = mapHostState(devicePowerState, deviceStatus))
+    {
+        return *mapped;
+    }
+    return HOST_STATE_UNKNOWN;
+}
+
 /**
  * @brief Map a D-Bus Host or Chassis transition to a RACK_MANAGER_COMMAND.
  * @return Command string, or nullopt if the transition is not supported.
@@ -232,6 +274,10 @@ inline constexpr bool isChassisTransition(std::string_view transition)
 /// Derive xyz.openbmc_project.State.Chassis.PowerState from a HostState.
 inline constexpr std::string_view hostStateToChassisPowerState(std::string_view hostState)
 {
+    if (hostState == HOST_STATE_UNKNOWN)
+    {
+        return CHASSIS_POWER_STATE_UNKNOWN;
+    }
     if (hostState == HOST_STATE_RUNNING)
     {
         return CHASSIS_POWER_STATE_ON;

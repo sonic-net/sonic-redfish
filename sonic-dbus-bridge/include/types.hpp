@@ -167,12 +167,14 @@ struct LeakSensorInfo
      *
      * "OK" when not leaking, "Warning" for a MINOR leak, "Critical" for any
      * other confirmed leak, "Unavailable" when the sensor is not readable.
+     * A faulted sensor cannot vouch for "not leaking", so that is
+     * "Unavailable" too; a leak it still reports is kept.
      */
     std::string detectorState() const
     {
         if (leaking == "No")
         {
-            return "OK";
+            return functional() ? "OK" : "Unavailable";
         }
         if (leaking == "Yes")
         {

@@ -92,6 +92,24 @@ class UpdateEngine
                             const std::string& field,
                             const std::string& value);
 
+    /**
+     * @brief Re-read every LIQUID_COOLING_INFO|* row and apply it
+     *
+     * Run on the subscriber thread once the subscriptions are active, so a
+     * sensor written between the startup read and the subscription is
+     * still exported.
+     */
+    void syncLeakSensors();
+
+    /**
+     * @brief Re-read HOST_STATE|switch-host and apply it
+     *
+     * Run on the subscriber thread once the subscriptions are active, so a
+     * row bmcctld wrote between the startup read and the subscription is
+     * not lost. Also handles every later notification for the row.
+     */
+    void syncHostState();
+
   private:
     boost::asio::io_context& io_;
     std::shared_ptr<RedisAdapter> redisAdapter_;
@@ -106,6 +124,8 @@ class UpdateEngine
     std::optional<DeviceMetadata> cachedMetadata_;
     std::optional<ChassisState> cachedState_;
     std::map<std::string, std::string> cachedLeakStates_;
+    // Last HOST_STATE|switch-host row forwarded. Subscriber thread only.
+    std::optional<HostStateInfo> lastHostState_;
 
     /**
      * @brief Poll timer handler
@@ -121,6 +141,14 @@ class UpdateEngine
      * @brief Schedule next poll
      */
     void scheduleNextPoll();
+
+    /**
+     * @brief Apply a leak sensor snapshot on the io_context thread
+     *
+     * Updates the D-Bus object when the derived state changed, and creates
+     * it when the sensor was not seen before.
+     */
+    void postLeakSensor(const LeakSensorInfo& sensor);
 };
 
 } // namespace sonic::dbus_bridge

@@ -486,7 +486,7 @@ def test_leak_is_recorded_without_any_subscriber():
     set_leak_state(db, "leak_sensor_1", "Critical")
     try:
         events = added_events(
-            before, "Environmental.1.1.0.LeakDetectedCritical")
+            before, "Environmental.1.1.LeakDetectedCritical")
         assert len(events) == 1, events
         assert events[0]["src"] == "bmcweb"
         assert events[0]["detail"]["resource"] == "leak_sensor_1"
@@ -495,7 +495,7 @@ def test_leak_is_recorded_without_any_subscriber():
     finally:
         before = mark()
         set_leak_state(db, "leak_sensor_1", "OK")
-        assert added_events(before, "Environmental.1.1.0.LeakDetectedNormal")
+        assert added_events(before, "Environmental.1.1.LeakDetectedNormal")
 
 
 def test_host_power_change_is_recorded():
@@ -503,13 +503,13 @@ def test_host_power_change_is_recorded():
     before = mark()
     set_host_state(db, "Off")
     try:
-        events = added_events(before, "ResourceEvent.1.3.0.ResourcePoweredOff")
+        events = added_events(before, "ResourceEvent.1.3.ResourcePoweredOff")
         assert len(events) == 1, events
         assert events[0]["detail"]["resource"] == "system"
     finally:
         before = mark()
         set_host_state(db, "On")
-        assert added_events(before, "ResourceEvent.1.3.0.ResourcePoweredOn")
+        assert added_events(before, "ResourceEvent.1.3.ResourcePoweredOn")
 
 
 def test_unrouted_path_is_not_copied_into_the_log(redfish):
