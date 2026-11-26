@@ -29,7 +29,7 @@ stages:
     timeoutInMinutes: 180
 
     pool:
-      name: sonicso1ES-amd64
+      name: sonic-ubuntu-1c
 
     steps:
     - checkout: self
