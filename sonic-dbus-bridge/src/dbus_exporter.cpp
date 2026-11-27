@@ -445,9 +445,15 @@ bool DBusExporter::updateLeakSensorState(const LeakSensorInfo& sensor)
 
     // Update Functional status from leak_sensor_status
     auto statusIt = interfaces_.find(statusKey);
-    if (statusIt != interfaces_.end())
+    if (statusIt == interfaces_.end())
     {
-        statusIt->second->set_property("Functional", sensor.functional());
+        LOG_WARNING("No OperationalStatus interface for %s; Functional not "
+                    "updated", sensor.name.c_str());
+    }
+    else if (!statusIt->second->set_property("Functional",
+                                             sensor.functional()))
+    {
+        LOG_WARNING("Failed to set Functional for %s", sensor.name.c_str());
     }
 
     // Update cached model

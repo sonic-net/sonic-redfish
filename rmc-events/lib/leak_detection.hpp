@@ -246,6 +246,8 @@ inline void handleLeakDetectorCollectionGet(
                     {
                         if (ec.value() == boost::system::errc::io_error)
                         {
+                            BMCWEB_LOG_DEBUG(
+                                "No leak detectors found: {}", ec.message());
                             asyncResp->res.jsonValue["Members"] =
                                 nlohmann::json::array();
                             asyncResp->res
@@ -269,6 +271,8 @@ inline void handleLeakDetectorCollectionGet(
                         std::string detectorId = objPath.filename();
                         if (detectorId.empty())
                         {
+                            BMCWEB_LOG_DEBUG(
+                                "Skipping leak detector path with no name");
                             continue;
                         }
                         nlohmann::json::object_t member;
@@ -334,6 +338,12 @@ inline void handleLeakDetectorGet(
                     const dbus::utility::DBusPropertiesMap& properties) {
                     if (ec)
                     {
+                        // Answered as not found, which also hides a bridge
+                        // that is down; the reason is kept here. The id is
+                        // client input and is not logged.
+                        BMCWEB_LOG_WARNING(
+                            "LeakDetector properties unavailable: {}",
+                            ec.message());
                         messages::resourceNotFound(asyncResp->res,
                                                    "LeakDetector",
                                                    detectorId);

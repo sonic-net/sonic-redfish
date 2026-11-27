@@ -16,6 +16,26 @@
 
 #include <boost/asio/post.hpp>
 
+// A leak sensor state is logged above the default level, so a leak is not
+// lost when the level is raised: a critical leak at CRIT, any other state
+// than a healthy OK at WARNING, and OK at NOTICE.
+#define LOG_LEAK_STATE(state, fmt, ...)                                        \
+    do                                                                         \
+    {                                                                          \
+        if ((state).starts_with("Critical"))                                   \
+        {                                                                      \
+            LOG_CRIT(fmt, ##__VA_ARGS__);                                      \
+        }                                                                      \
+        else if ((state) != "OK")                                              \
+        {                                                                      \
+            LOG_WARNING(fmt, ##__VA_ARGS__);                                   \
+        }                                                                      \
+        else                                                                   \
+        {                                                                      \
+            LOG_NOTICE(fmt, ##__VA_ARGS__);                                    \
+        }                                                                      \
+    } while (0)
+
 namespace sonic::dbus_bridge
 {
 
@@ -343,17 +363,19 @@ void UpdateEngine::postLeakSensor(const LeakSensorInfo& sensor)
             dbusExporter_->hasLeakSensor(sensor.name), cached, newState))
         {
             case leak_sync::LeakSensorAction::Create:
-                LOG_INFO("[UpdateEngine] New leak sensor %s (%s)",
-                         sensor.name.c_str(), newState.c_str());
+                LOG_LEAK_STATE(newState, "[UpdateEngine] New leak sensor %s (%s)",
+                               sensor.name.c_str(), newState.c_str());
                 if (dbusExporter_->addLeakSensorObject(sensor))
                 {
                     cachedLeakStates_[sensor.name] = newState;
                 }
                 break;
             case leak_sync::LeakSensorAction::Update:
-                LOG_INFO("[UpdateEngine] Leak sensor %s state: %s -> %s",
-                         sensor.name.c_str(),
-                         cached ? cached->c_str() : "(none)", newState.c_str());
+                LOG_LEAK_STATE(newState,
+                               "[UpdateEngine] Leak sensor %s state: %s -> %s",
+                               sensor.name.c_str(),
+                               cached ? cached->c_str() : "(none)",
+                               newState.c_str());
                 cachedLeakStates_[sensor.name] = newState;
                 dbusExporter_->updateLeakSensorState(sensor);
                 break;

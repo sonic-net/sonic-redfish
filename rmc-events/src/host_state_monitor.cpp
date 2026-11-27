@@ -25,6 +25,7 @@
 #include "dbus_utility.hpp"
 #include "event_service_manager.hpp"
 #include "logging.hpp"
+#include "redfish_audit_hook.hpp"
 
 #include <sdbusplus/bus/match.hpp>
 #include <sdbusplus/message.hpp>
@@ -47,6 +48,7 @@ static bool mapHostStateToEvent(const std::string& stateEnum,
         "xyz.openbmc_project.State.Host.HostState.";
     if (!stateEnum.starts_with(prefix))
     {
+        BMCWEB_LOG_WARNING("Unexpected HostState format; no event sent");
         return false;
     }
     std::string_view state = std::string_view(stateEnum).substr(prefix.size());
@@ -86,13 +88,23 @@ static void onHostStatePropertiesChanged(sdbusplus::message_t& msg)
     std::string interface;
     dbus::utility::DBusPropertiesMap props;
     std::vector<std::string> invalidProps;
-    msg.read(interface, props, invalidProps);
+    try
+    {
+        msg.read(interface, props, invalidProps);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        BMCWEB_LOG_ERROR("Malformed State.Host PropertiesChanged signal: {}",
+                         e.what());
+        return;
+    }
 
     auto found = std::ranges::find_if(props, [](const auto& x) {
         return x.first == "CurrentHostState";
     });
     if (found == props.end())
     {
+        BMCWEB_LOG_DEBUG("Signal for {} carries no CurrentHostState", interface);
         return;
     }
 
@@ -130,8 +142,13 @@ static void onHostStatePropertiesChanged(sdbusplus::message_t& msg)
 
     BMCWEB_LOG_INFO("Sending host power event: {} ({})", messageId, *newState);
 
-    EventServiceManager::getInstance().sendEvent(
-        std::move(eventMessage), std::string_view(), "ComputerSystem");
+    // A power change must be on record whatever the log level.
+    EventServiceManager& events = EventServiceManager::getInstance();
+    redfish_audit::recordEvent(messageId, resourceName, "OK",
+                               events.getNumberOfSubscriptions());
+
+    events.sendEvent(std::move(eventMessage), std::string_view(),
+                     "ComputerSystem");
 }
 
 const std::string hostStateMatchStr =

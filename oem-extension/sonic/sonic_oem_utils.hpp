@@ -58,6 +58,8 @@ inline std::optional<nlohmann::json> sonicOemValidateRequest(
 
     if (managerId != BMCWEB_REDFISH_MANAGER_URI_NAME)
     {
+        // The id is client input, so it is not copied into the log.
+        BMCWEB_LOG_WARNING("SONiC.{}: unknown manager id", actionName);
         messages::resourceNotFound(asyncResp->res, "Manager", managerId);
         return std::nullopt;
     }
@@ -74,6 +76,8 @@ inline std::optional<nlohmann::json> sonicOemValidateRequest(
     nlohmann::json reqJson = nlohmann::json::parse(req.body(), nullptr, false);
     if (reqJson.is_discarded())
     {
+        BMCWEB_LOG_WARNING("SONiC.{}: malformed JSON body ({} bytes)",
+                           actionName, req.body().size());
         messages::malformedJSON(asyncResp->res);
         return std::nullopt;
     }

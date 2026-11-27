@@ -89,7 +89,7 @@ Plus the matching `.changes`, `.buildinfo` and `.dsc` files.
 # Show all available targets
 make help
 
-# Build both components, no tests
+# Build both components, no tests (automatically runs clean first)
 make build
 
 # Build individual components (automatically runs clean + dependencies)
@@ -193,6 +193,7 @@ make all
 
 The build system automatically handles dependencies:
 
+- **`build`**: Automatically runs `clean`, then builds both components in Docker
 - **`build-bmcweb`**: Automatically runs `clean` -> `setup-bmcweb` -> `copy-oem-extension` -> `apply-patches` -> build
 - **`build-bridge`**: Automatically runs `clean` -> build
 
@@ -228,6 +229,8 @@ Current patches:
    MutualTLS session together with its connection, closes idle HTTP/1
    keep-alive and HTTP/2 connections, and enables TCP keepalive on event
    streams
+12. `0012-Record-an-audit-trail-of-Redfish-requests.patch` - Calls the audit
+   hook from the router and connection code (section 7.3)
 
 To add a new patch:
 1. Make changes in bmcweb source directory.
@@ -316,6 +319,97 @@ The Debian packages can be installed in SONiC images.
 - **Build system**: Meson + Debian packaging
 - **Output**: `sonic-dbus-bridge_1.0.0_<arch>.deb`, `sonic-dbus-bridge-dbgsym_1.0.0_<arch>.deb`
 - **Configuration**: `config/config.yaml` for Redis, D-Bus, and platform settings
+
+### 7.3. redfish-audit
+
+- **Location**: `redfish-audit/` (copied into `bmcweb/include/` at build time)
+- **Purpose**: Records who changed what through Redfish
+- `include/redfish_audit.hpp` - record format, pseudonyms, non-blocking syslog
+  sender; standard library only, covered by `tests/unit-tests/redfish_audit_test.cpp`
+- `bmcweb/redfish_audit_hook.hpp` - the bmcweb side: which requests are
+  recorded and which request fields may be logged
+
+bmcweb writes one JSON line to syslog (identifier `redfish-audit`, facility
+`authpriv`) for every POST, PATCH, PUT or DELETE, and for every request
+answered with 401 or 403. Successful GETs are recorded only at log level
+`DEBUG` (see below). Each record
+carries a UTC timestamp (`ts`) and a sequence number (`seq`).
+
+Three kinds of request do not get a record of their own:
+
+- Accepted `SubmitTelemetry` calls are counted and reported once a minute
+  (`telemetry_summary`).
+- Requests refused before routing for missing or bad credentials are limited
+  to 20 records per second, and `read` records to 50 per second. The next
+  record of the same kind carries `detail.suppressed`, the number left out.
+- A request bmcweb rejects before routing as malformed or too large (400,
+  413, 431) is not recorded: nothing was authenticated, routed or changed.
+
+```text
+redfish-audit[41]: {"v":1,"ts":"2026-11-16T17:01:21.866Z","seq":2,"src":"bmcweb","ev":"request","user":"bmcweb","role":"Administrator","auth":"basic","method":"POST","uri":"/redfish/v1/Systems/<str>/Actions/ComputerSystem.Reset","action":"ComputerSystem.Reset","detail":{"ResetType":"PowerCycle"},"status":204,"ms":1}
+```
+
+| `ev` | Written when |
+|------|--------------|
+| `read` | A GET or HEAD completes, only while the log level is `DEBUG` (see below) |
+| `request` | A state-changing request completes, with any status |
+| `denied` | A request is answered with 401 or 403 |
+| `login`, `login_failed`, `logout` | A session is created, refused or deleted |
+| `telemetry_summary` | At most once a minute: accepted and rejected `SubmitTelemetry` calls |
+| `event` | The BMC raises a Redfish event of its own: a leak detector changes state, or the host power state changes. `msg` is the MessageId; `detail` has the `resource`, the `Severity` and the number of `subscribers` |
+| `start` | bmcweb starts |
+| `gap` | Records were lost (syslog unavailable); `detail.lost` is the count |
+
+#### Log level at runtime
+
+The log level is set in CONFIG_DB, in the `LOGGER` table used by other SONiC
+daemons, under the name `sonic-dbus-bridge`. The default is `INFO`.
+
+```bash
+# On the BMC host: raise the level, and put it back
+sudo config syslog level -i sonic-dbus-bridge -l DEBUG
+sudo config syslog level -i sonic-dbus-bridge -l INFO
+
+# The same from any shell with database access, including the redfish container
+sonic-db-cli CONFIG_DB HSET "LOGGER|sonic-dbus-bridge" LOGLEVEL DEBUG
+sonic-db-cli CONFIG_DB HGET "LOGGER|sonic-dbus-bridge" LOGLEVEL
+sonic-db-cli CONFIG_DB DEL  "LOGGER|sonic-dbus-bridge"    # back to the default
+```
+
+Accepted values are `DEBUG`, `INFO`, `NOTICE`, `WARN`, `ERROR` and `CRIT`, in
+either case; an unknown value is ignored and the level stays as it was. The bridge is notified by Redis when the entry
+changes, so a change applies at once and needs no restart. It lasts across restarts of the service, and across a
+reboot only after `config save`.
+
+Audit records of changes, refusals and events do not depend on the level:
+they are written at every level. An `event` record for a critical leak uses
+syslog severity `crit`, one for a warning `warning`.
+
+bmcweb's own log is built at `warning` (`-Dbmcweb-logging=warning` in
+`debian/rules`) and follows the same setting: `DEBUG` turns on its debug log,
+`ERROR` and `CRIT` lower it, and any other value leaves it at `warning`,
+because bmcweb's info level logs every request. The bridge logs a leak sensor
+state change at `CRIT` (critical leak), `WARN` (any other unhealthy state) or
+`NOTICE` (back to OK).
+
+At `DEBUG` the bridge also logs each Redis read, and bmcweb writes a `read`
+audit record for every GET and HEAD. bmcweb has no database access: it follows
+the level through the bridge's read-only D-Bus property `LogLevel`
+(`com.sonic.RackManager`, `/com/sonic/Redfish/Logging`). Read records use
+syslog severity `info`; all other audit records use `notice`. At most 50 read
+records are written per second, so reads cannot crowd out the records of
+changes; the next read record carries `detail.suppressed`, the number left
+out. At any other level a read request costs one flag test.
+
+Request bodies, passwords, tokens, certificates and addresses are never
+logged. `uri` is the route pattern, not the path sent. `client` and `sess`
+are keyed hashes that stay stable until bmcweb restarts. A request field
+appears in `detail` only if `redfish_audit_hook.hpp` lists it for that route;
+to log a field of a new action, add it there. The account name of a session
+login or a new account is copied only when the request succeeded, because a
+refused one may carry a password typed into the wrong field. bmcweb's own
+debug log names the HTTP/2 headers it receives without their values. Sending never blocks a request:
+if syslog cannot take a record it is dropped and counted.
 
 <sub>[^ Back to Table of Contents](#table-of-contents)</sub>
 

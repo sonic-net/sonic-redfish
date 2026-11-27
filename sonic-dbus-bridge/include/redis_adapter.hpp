@@ -154,7 +154,39 @@ class RedisAdapter
      */
     std::optional<std::string> getRedfishClientCnames();
 
+    /**
+     * @brief Get the configured log level from CONFIG_DB
+     *
+     * Reads LOGGER|sonic-dbus-bridge field LOGLEVEL, the entry written by
+     * "config syslog level -i sonic-dbus-bridge -l <level>".
+     *
+     * @return the configured value, an empty string when none is set, or
+     *         std::nullopt when CONFIG_DB could not be read
+     */
+    std::optional<std::string> getLogLevel();
+
+    /**
+     * @brief Open a further connection to CONFIG_DB, for a subscriber
+     *
+     * A failure is not logged here: the caller retries and reports it once.
+     *
+     * @return a context the caller owns, or nullptr on failure
+     */
+    redisContext* openConfigDbConnection();
+
   private:
+    /**
+     * @brief Read one CONFIG_DB hash field, telling "not set" from "failed"
+     *
+     * @param logFailure false for callers that poll and report a failure
+     *        themselves, once
+     * @return the value, an empty string when the field is not set, or
+     *         std::nullopt when the read failed
+     */
+    std::optional<std::string> readConfigField(const char* key,
+                                               const char* field,
+                                               bool logFailure);
+
     std::string configDbHost_;
     int configDbPort_;
     std::string stateDbHost_;
@@ -171,7 +203,17 @@ class RedisAdapter
      * @param dbIndex Database index (4 for CONFIG_DB, 6 for STATE_DB)
      * @return redisContext* on success, nullptr on failure
      */
-    redisContext* connectToDb(const std::string& host, int port, int dbIndex);
+    redisContext* connectToDb(const std::string& host, int port, int dbIndex,
+                              bool logFailure = true);
+
+    /**
+     * @brief Report a failed hget()/hgetall() once per outage
+     *
+     * These reads run for every key on every update, so a broken connection
+     * would otherwise repeat the same warning without end.
+     */
+    void noteReadResult(bool ok, const char* command, const std::string& key);
+    bool readFailureLogged_ = false;
 
     /**
      * @brief Get all fields from a Redis hash

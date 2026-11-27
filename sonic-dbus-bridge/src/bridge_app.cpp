@@ -15,6 +15,9 @@
 #include "config.h"
 #include <systemd/sd-bus.h>
 #include <signal.h>
+#include <chrono>
+#include <optional>
+#include <stdexcept>
 
 namespace sonic::dbus_bridge
 {
@@ -35,10 +38,13 @@ static void handleLogSignal(int signum)
 }
 
 BridgeApp::BridgeApp(const std::string& configPath)
-    : configPath_(configPath), signals_(io_, SIGINT, SIGTERM)
+    : configPath_(configPath), signals_(io_, SIGINT, SIGTERM),
+      logLevelRetryTimer_(io_)
 {
     // Initialize logger from environment variable
     LOGGER_INIT();
+    // The level used whenever CONFIG_DB does not configure one.
+    defaultLogLevel_ = logger::levelName(logger::getLevel());
 
     // Register signal handlers for runtime log file dumping
     // SIGUSR1: start dumping logs to /tmp/sonic-dbus-bridge.log
@@ -84,6 +90,9 @@ bool BridgeApp::initialize()
 
     // Create state objects
     createStateObjects();
+
+    // Log level control, on the rack manager connection
+    createLoggingObject();
 
     // Initialize rack manager receiver (alert/telemetry via D-Bus -> Redis).
     // Uses its own connection / object server so it owns the
@@ -160,6 +169,12 @@ void BridgeApp::shutdown()
     if (updateEngine_)
     {
         updateEngine_->stop();
+    }
+
+    logLevelRetryTimer_.cancel();
+    if (logLevelWatcher_)
+    {
+        logLevelWatcher_->stop();
     }
 
     // sdbusplus connection cleanup is automatic (RAII)
@@ -260,6 +275,112 @@ bool BridgeApp::connectDbus()
         LOG_ERROR("Failed to connect to D-Bus: %s", e.what());
         return false;
     }
+}
+
+// How long to wait before reading the log level again after a failed read.
+static constexpr int logLevelRetrySec = 30;
+
+// The log level is set the way it is for other SONiC daemons, in CONFIG_DB:
+//   config syslog level -i sonic-dbus-bridge -l DEBUG
+//   sonic-db-cli CONFIG_DB HSET "LOGGER|sonic-dbus-bridge" LOGLEVEL DEBUG
+// It is republished as the read-only LogLevel property on the rack manager
+// connection (existing bus policy: root and bmcweb only). bmcweb follows the
+// property: at DEBUG it also audits read requests.
+void BridgeApp::createLoggingObject()
+{
+    try
+    {
+        loggingIface_ = rackManagerServer_->add_interface(
+            "/com/sonic/Redfish/Logging", "com.sonic.Redfish.Logging");
+        loggingIface_->register_property_r<std::string>(
+            "LogLevel", sdbusplus::vtable::property_::emits_change,
+            [](const auto&) {
+                return std::string(logger::levelName(logger::getLevel()));
+            });
+        loggingIface_->initialize();
+        // Announce the starting level to a bmcweb that is already running.
+        loggingIface_->signal_property("LogLevel");
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR("Failed to create log level object: %s", e.what());
+    }
+
+    // Told by Redis when the entry changes; nothing is read until then.
+    logLevelWatcher_ = std::make_unique<ConfigKeyWatcher>(
+        io_, "LOGGER|sonic-dbus-bridge",
+        [this]() {
+            return redisAdapter_ ? redisAdapter_->openConfigDbConnection()
+                                 : nullptr;
+        },
+        [this]() { readLogLevel(); });
+    logLevelWatcher_->start();
+}
+
+void BridgeApp::applyLogLevel(const std::string& name)
+{
+    std::optional<logger::LogLevel> level = logger::parseLevel(name);
+    if (!level)
+    {
+        // Reported once, not for every later change to the entry. The value
+        // comes from the database, so it is not copied into the log.
+        if (!logLevelRejected_)
+        {
+            LOG_WARNING("Ignoring unknown LOGLEVEL in CONFIG_DB; keeping %s",
+                        logger::levelName(logger::getLevel()));
+            logLevelRejected_ = true;
+        }
+        return;
+    }
+    logLevelRejected_ = false;
+    if (*level == logger::getLevel())
+    {
+        return;
+    }
+    const char* oldName = logger::levelName(logger::getLevel());
+    logger::setLevel(name);
+    // Logged with syslog() directly so the change is recorded whatever the
+    // new level is.
+    syslog(SYSLOG_NOTICE, "Log level changed: %s -> %s", oldName,
+           logger::levelName(*level));
+    if (loggingIface_)
+    {
+        loggingIface_->signal_property("LogLevel");
+    }
+}
+
+void BridgeApp::readLogLevel()
+{
+    logLevelRetryTimer_.cancel();
+    std::optional<std::string> configured;
+    if (redisAdapter_)
+    {
+        configured = redisAdapter_->getLogLevel();
+    }
+    if (!configured)
+    {
+        // CONFIG_DB cannot be read: keep the current level and try again.
+        // Said once, not on every retry.
+        if (!logLevelReadFailed_)
+        {
+            LOG_WARNING("Log level cannot be read from CONFIG_DB; keeping %s",
+                        logger::levelName(logger::getLevel()));
+            logLevelReadFailed_ = true;
+        }
+        logLevelRetryTimer_.expires_after(
+            std::chrono::seconds(logLevelRetrySec));
+        logLevelRetryTimer_.async_wait(
+            [this](const boost::system::error_code& ec) {
+                if (!ec)
+                {
+                    readLogLevel();
+                }
+            });
+        return;
+    }
+    logLevelReadFailed_ = false;
+    // No entry means the default, so removing the entry undoes a change.
+    applyLogLevel(configured->empty() ? defaultLogLevel_ : *configured);
 }
 
 void BridgeApp::initializeDataSources()
@@ -528,6 +649,11 @@ void BridgeApp::handleSignal(const boost::system::error_code& ec, int signal)
     {
         LOG_INFO("Received signal %d", signal);
         shutdown();
+    }
+    else if (ec != boost::asio::error::operation_aborted)
+    {
+        LOG_WARNING("Waiting for a shutdown signal failed: %s",
+                    ec.message().c_str());
     }
 }
 

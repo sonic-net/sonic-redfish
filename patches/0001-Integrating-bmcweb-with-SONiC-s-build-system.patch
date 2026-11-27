@@ -143,7 +143,7 @@ index 00000000..a9ae5b06
 +	dh $@ --buildsystem=meson
 +
 +override_dh_auto_configure:
-+	dh_auto_configure -- --wrap-mode=default
++	dh_auto_configure -- --wrap-mode=default -Dbmcweb-logging=warning
 +
 +# dh_auto_install installs to debian/tmp/, then dh_install copies
 +# files listed in debian/install to debian/bmcweb/

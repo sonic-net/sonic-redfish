@@ -39,6 +39,7 @@ SCRIPTS_DIR := $(REPO_ROOT)/scripts
 BUILD_DIR := $(REPO_ROOT)/build
 TARGET_DIR := $(REPO_ROOT)/$(SONIC_REDFISH_TARGET)
 RMC_EVENTS_DIR := $(REPO_ROOT)/rmc-events
+REDFISH_AUDIT_DIR := $(REPO_ROOT)/redfish-audit
 SERIES_FILE := $(PATCHES_DIR)/series
 DEBIAN_DIR := $(BMCWEB_DIR)/debian
 OEM_EXT_DIR := $(REPO_ROOT)/oem-extension
@@ -55,7 +56,7 @@ DOCKERFILE_BUILD := $(BUILD_DIR)/Dockerfile.build
 MAIN_TARGET := $(BMCWEB_BINARY)
 DERIVED_TARGETS := $(BRIDGE_BINARY)
 
-.PHONY: all build clean reset setup-bmcweb copy-oem-extension copy-patches copy-rmc-events apply-patches build-bmcweb build-bridge build-bmcweb-native build-bridge-native build-in-docker test unit-test help
+.PHONY: all build clean reset setup-bmcweb copy-oem-extension copy-patches copy-rmc-events copy-redfish-audit apply-patches build-bmcweb build-bridge build-bmcweb-native build-bridge-native build-in-docker test unit-test help
 
 # Recipes in this Makefile share Docker images and the target/ directory, so
 # the top-level prereq chain (build → unit-test → test) must run sequentially.
@@ -79,7 +80,7 @@ sonic-redfish Build System (Docker-only)
 Targets:
   make                  Build + run unit tests + run integration tests (fails on any test failure)
   make all              Alias for `make` (build + unit-test + test)
-  make build            Build bmcweb + sonic-dbus-bridge .debs only (no tests)
+  make build            Clean, then build bmcweb + sonic-dbus-bridge .debs (no tests)
   make build-bmcweb     Build bmcweb only
   make build-bridge     Build sonic-dbus-bridge only
   make test             Run Redfish API integration tests (requires prior build)
@@ -108,8 +109,9 @@ export HELP_TEXT
 help:
 	@echo "$$HELP_TEXT"
 
-# Build target - Always Docker
-build: $(DOCKERFILE_BUILD)
+# Build target - Always Docker. Cleans first: patches only apply to a pristine
+# bmcweb tree, so a build on top of an earlier one would fail.
+build: clean $(DOCKERFILE_BUILD)
 	@echo "========================================="
 	@echo "Building sonic-redfish (Docker-only mode)"
 	@echo "========================================="
@@ -236,8 +238,15 @@ copy-rmc-events: setup-bmcweb
 	done
 	@echo "  leak-detection schemas linked"
 
+# Copy the audit headers into bmcweb's include path before patches are
+# applied. The audit patch #include's them but does not carry their contents.
+copy-redfish-audit: setup-bmcweb
+	@echo "Copying redfish-audit headers into bmcweb tree..."
+	@cp $(REDFISH_AUDIT_DIR)/include/*.hpp $(REDFISH_AUDIT_DIR)/bmcweb/*.hpp $(BMCWEB_DIR)/include/
+	@echo "  redfish-audit headers copied"
+
 # Apply patches using series file
-apply-patches: setup-bmcweb copy-oem-extension copy-rmc-events
+apply-patches: setup-bmcweb copy-oem-extension copy-rmc-events copy-redfish-audit
 	@echo "Applying patches from series file..."
 	@if [ ! -d "$(BMCWEB_DIR)" ]; then \
 		echo "Error: bmcweb directory not found"; \
@@ -555,6 +564,7 @@ unit-test:
 				fi; \
 				g++ -std=c++20 -Wall -Wextra -g -O0 -pthread \
 					-I sonic-dbus-bridge/include \
+					-I redfish-audit/include \
 					-I /usr/src/googletest/googletest \
 					-I /usr/src/googletest/googletest/include \
 					\$$t \$$extra_src \

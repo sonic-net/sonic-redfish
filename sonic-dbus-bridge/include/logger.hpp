@@ -11,11 +11,15 @@
 
 #include <syslog.h>
 #include <atomic>
+#include <cctype>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <signal.h>
 #include <unistd.h>
 
@@ -114,42 +118,67 @@ namespace sonic::dbus_bridge::logger
                     std::memory_order_acquire));
     }
 
+    // Level names of the CONFIG_DB LOGGER table (the names "config syslog
+    // level" accepts), plus the syslog spellings WARNING and ERR.
+    // Case is ignored, so a hand-typed "debug" is not silently dropped.
+    inline std::optional<LogLevel> parseLevel(std::string_view text)
+    {
+        std::string name(text);
+        for (char& c : name)
+        {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        if (name == "DEBUG") { return LogLevel::DEBUG; }
+        if (name == "INFO") { return LogLevel::INFO; }
+        if (name == "NOTICE") { return LogLevel::NOTICE; }
+        if (name == "WARN" || name == "WARNING") { return LogLevel::WARNING; }
+        if (name == "ERROR" || name == "ERR") { return LogLevel::ERR; }
+        // Nothing is logged above CRIT, so the two higher names map to it.
+        if (name == "CRIT" || name == "ALERT" || name == "EMERG")
+        {
+            return LogLevel::CRIT;
+        }
+        return std::nullopt;
+    }
+
+    inline const char* levelName(LogLevel level)
+    {
+        switch (level)
+        {
+            case LogLevel::DEBUG: return "DEBUG";
+            case LogLevel::INFO: return "INFO";
+            case LogLevel::NOTICE: return "NOTICE";
+            case LogLevel::WARNING: return "WARN";
+            case LogLevel::ERR: return "ERROR";
+            case LogLevel::CRIT: return "CRIT";
+        }
+        return "INFO";
+    }
+
+    inline LogLevel getLevel()
+    {
+        return getLoggerState().currentLevel.load(std::memory_order_acquire);
+    }
+
+    // Change the level at runtime. False (and no change) for an unknown name.
+    inline bool setLevel(std::string_view name)
+    {
+        std::optional<LogLevel> level = parseLevel(name);
+        if (!level)
+        {
+            return false;
+        }
+        getLoggerState().currentLevel.store(*level, std::memory_order_release);
+        return true;
+    }
+
     // Initialize logger from environment variable
     inline void initFromEnv()
     {
         const char* levelStr = std::getenv("SONIC_DBUS_BRIDGE_LOG_LEVEL");
         if (levelStr)
         {
-            if (strcmp(levelStr, "DEBUG") == 0)
-            {
-                getLoggerState().currentLevel.store(LogLevel::DEBUG,
-                        std::memory_order_release);
-            }
-            else if (strcmp(levelStr, "INFO") == 0)
-            {
-                getLoggerState().currentLevel.store(LogLevel::INFO,
-                        std::memory_order_release);
-            }
-            else if (strcmp(levelStr, "NOTICE") == 0)
-            {
-                getLoggerState().currentLevel.store(LogLevel::NOTICE,
-                        std::memory_order_release);
-            }
-            else if (strcmp(levelStr, "WARNING") == 0)
-            {
-                getLoggerState().currentLevel.store(LogLevel::WARNING,
-                        std::memory_order_release);
-            }
-            else if (strcmp(levelStr, "ERR") == 0)
-            {
-                getLoggerState().currentLevel.store(LogLevel::ERR,
-                        std::memory_order_release);
-            }
-            else if (strcmp(levelStr, "CRIT") == 0)
-            {
-                getLoggerState().currentLevel.store(LogLevel::CRIT,
-                        std::memory_order_release);
-            }
+            setLevel(levelStr);
         }
     }
 

@@ -22,10 +22,12 @@
 #include "state_manager.hpp"
 #include "rack_manager_receiver.hpp"
 #include "redis_state_subscriber.hpp"
+#include "config_key_watcher.hpp"
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/object_server.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/signal_set.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <memory>
 #include <map>
 
@@ -104,6 +106,19 @@ namespace sonic::dbus_bridge
             // owns its own well-known name (com.sonic.RackManager).
             std::shared_ptr<sdbusplus::asio::connection> rackManagerConn_;
             std::unique_ptr<sdbusplus::asio::object_server> rackManagerServer_;
+
+            // Runtime log level. CONFIG_DB (LOGGER|sonic-dbus-bridge) is
+            // where it is set; the read-only LogLevel property republishes
+            // it for bmcweb, which has no database access.
+            std::shared_ptr<sdbusplus::asio::dbus_interface> loggingIface_;
+            std::unique_ptr<ConfigKeyWatcher> logLevelWatcher_;
+            boost::asio::steady_timer logLevelRetryTimer_;
+            std::string defaultLogLevel_;
+            bool logLevelRejected_ = false;
+            bool logLevelReadFailed_ = false;
+            void createLoggingObject();
+            void applyLogLevel(const std::string& name);
+            void readLogLevel();
 
             // Data source adapters
             std::shared_ptr<RedisAdapter> redisAdapter_;

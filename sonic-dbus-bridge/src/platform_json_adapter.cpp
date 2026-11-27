@@ -11,7 +11,9 @@
 #include "logger.hpp"
 #include <json/json.h>
 #include <fstream>
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
 
 namespace sonic::dbus_bridge
 {
@@ -53,6 +55,7 @@ std::string PlatformJsonAdapter::expandPath(const std::string& path) const
         else
         {
             // Default platform for ASPEED
+            LOG_DEBUG("PLATFORM is not set; using the default platform name");
             result.replace(pos, 11, "arm64-aspeed_ast2700-r0");
         }
     }
@@ -65,6 +68,7 @@ bool PlatformJsonAdapter::parseJson(const std::string& path)
     std::ifstream file(path);
     if (!file.is_open())
     {
+        LOG_WARNING("Cannot open %s: %s", path.c_str(), strerror(errno));
         return false;
     }
 
@@ -135,6 +139,9 @@ bool PlatformJsonAdapter::parseJson(const std::string& path)
         }
     }
 
+    LOG_INFO("platform.json loaded: %zu PSUs, %zu fans, %zu thermals",
+             description_.psuNames.size(), description_.fanNames.size(),
+             description_.thermalNames.size());
     return true;
 }
 

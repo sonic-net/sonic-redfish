@@ -10,6 +10,7 @@
 #include "fru_adapter.hpp"
 #include "logger.hpp"
 #include <fstream>
+#include <cerrno>
 #include <cstring>
 #include <cstdint>
 
@@ -60,6 +61,9 @@ bool FruAdapter::readEeprom(const std::string& path)
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open())
     {
+        // Several candidate paths are tried, so a miss is a debug line.
+        LOG_DEBUG("Cannot open FRU EEPROM %s: %s", path.c_str(),
+                  strerror(errno));
         return false;
     }
 
@@ -69,6 +73,8 @@ bool FruAdapter::readEeprom(const std::string& path)
     
     if (data.size() < 11) // Minimum TLV header size
     {
+        LOG_DEBUG("FRU EEPROM %s is too short (%zu bytes)", path.c_str(),
+                  data.size());
         return false;
     }
 
@@ -99,13 +105,22 @@ FruInfo FruAdapter::parseTlv(const std::vector<uint8_t>& data)
 
     while (offset < data.size() && offset < (11 + static_cast<size_t>(totalLen)))
     {
-        if (offset + 2 > data.size()) break;
+        if (offset + 2 > data.size())
+        {
+            LOG_WARNING("FRU TLV data ends inside a record header");
+            break;
+        }
         
         uint8_t type = data[offset];
         uint8_t len = data[offset + 1];
         offset += 2;
         
-        if (offset + len > data.size()) break;
+        if (offset + len > data.size())
+        {
+            LOG_WARNING("FRU TLV record 0x%02x runs past the end of the data",
+                        type);
+            break;
+        }
         
         std::string value(reinterpret_cast<const char*>(&data[offset]), len);
         
