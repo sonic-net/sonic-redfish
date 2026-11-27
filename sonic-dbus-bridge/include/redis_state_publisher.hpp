@@ -37,11 +37,11 @@ public:
     /**
      * @brief Connect to Redis STATE_DB (DB 6)
      * 
-     * @param host Redis host (default: localhost)
+     * @param host Redis host (empty selects the configured local socket)
      * @param port Redis port (default: 6379)
      * @return true if connection successful
      */
-    bool connect(const std::string& host = "localhost", int port = 6379);
+    bool connect(const std::string& host = "", int port = 6379);
     
     /**
      * @brief Check if connected to Redis
